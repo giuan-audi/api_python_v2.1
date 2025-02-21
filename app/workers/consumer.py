@@ -2,12 +2,12 @@ import json
 from app.agents.llm_agent import LLMAgent
 from app.database import SessionLocal
 from sqlalchemy.orm import Session
-from app.models import Request, Status, TaskType, Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action
+from app.models import Request, Status, TaskType, Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action, WBS
 from app.utils import parsers, rabbitmq
 import logging
 from datetime import datetime
 from app.celery import celery_app
-from sqlalchemy.exc import IntegrityError
+import pika
 import openai
 import google.api_core.exceptions
 import requests
@@ -48,7 +48,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             update_request_status(db, request_id_interno, Status.FAILED, error_message)
             return
 
-        # Buscando a requisição no banco para obter parent
+        # Buscando a requisição no banco para obter o parent
         db_request = db.query(Request).filter(Request.request_id == request_id_interno).first()
         if not db_request:
             error_message = f"Requisição com request_id {request_id_interno} não encontrada no banco de dados."
@@ -112,6 +112,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 existing_items = db.query(PBI).filter(PBI.feature_id == parent, PBI.is_active == True).all()
             elif task_type_enum == TaskType.TEST_CASE:
                 existing_items = db.query(TestCase).filter(TestCase.parent == parent, TestCase.is_active == True).all()
+            elif task_type_enum == TaskType.WBS:
+                existing_items = db.query(WBS).filter(WBS.parent == parent, WBS.is_active == True).all()
             else:
                 error_message = f"Task type desconhecido: {task_type_enum.value}"
                 logger.error(error_message)
@@ -133,7 +135,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             # 4. Criar e adicionar os novos itens
             if task_type_enum == TaskType.EPIC:
                 new_epic = parsers.parse_epic_response(generated_text, prompt_tokens, completion_tokens)
-                new_epic.team_project_id = str(db_request.parent)  # Salva o team_project_id (string)
+                new_epic.team_project_id = str(db_request.parent)  # Salva o team_project_id
                 new_epic.version = new_version
                 new_epic.is_active = True
                 db.add(new_epic)
@@ -163,9 +165,9 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                     task.is_active = True
                 db.add_all(new_tasks)
                 db.flush()  # Força o INSERT
-                item_id = [t.id for t in new_tasks] # IDs agora disponíveis
+                item_id = [t.id for t in new_tasks]  # IDs agora disponíveis
             elif task_type_enum == TaskType.BUG:
-                new_bugs = parsers.parse_bug_response(generated_text, parent, parent, prompt_tokens, completion_tokens)
+                new_bugs = parsers.parse_bug_response(generated_text, parent, parent, prompt_tokens, completion_tokens)  # Corrigido: request_id_client para issue_id e user_story_id
                 for bug in new_bugs:
                     bug.version = new_version
                     bug.is_active = True
@@ -188,6 +190,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 db.add_all(new_pbis)
                 db.flush()  # Força o INSERT
                 item_id = [p.id for p in new_pbis]  # Lista de IDs
+
             elif task_type_enum == TaskType.TEST_CASE:
                 new_test_cases = parsers.parse_test_case_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for test_case in new_test_cases:
@@ -200,9 +203,17 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                     for action in test_case.actions:
                         action.version = new_version
                         action.is_active = True
-                db.add_all(new_test_cases)
-                db.flush() # Força o insert
+                db.add_all(new_test_cases)  # Salva TestCase, Gherkin e Actions em cascata
+                db.flush()
                 item_id = [tc.id for tc in new_test_cases]  # Lista de IDs dos test cases
+            elif task_type_enum == TaskType.WBS:
+                new_wbs = parsers.parse_wbs_response(generated_text, parent, prompt_tokens, completion_tokens)
+                new_wbs.version = new_version  # Define a versão
+                new_wbs.is_active = True  # Define como ativo
+                db.add(new_wbs)  # Adiciona o novo WBS ao banco
+                db.flush()
+                db.refresh(new_wbs)  # Atualiza o objeto para obter o ID gerado
+                item_id = [new_wbs.id]   # Cria uma lista com o ID do novo WBS
 
             db.commit()
             logger.info(f"Resposta processada e salva no banco de dados para request_id: {request_id_interno}, task_type: {task_type_enum.value}")

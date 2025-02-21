@@ -6,6 +6,7 @@ import enum
 
 Base = declarative_base()
 
+
 class TaskType(enum.Enum):
     EPIC = "epic"
     FEATURE = "feature"
@@ -15,16 +16,19 @@ class TaskType(enum.Enum):
     ISSUE = "issue"
     PBI = "pbi"
     TEST_CASE = "test_case"
+    WBS = "wbs"  # Adicionado WBS
+
 
 class Status(enum.Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
 
+
 class Epic(Base):
     __tablename__ = "epics"
-    id = Column(Integer, primary_key=True)  # ID interno (INT), autoincremental
-    team_project_id = Column(Integer)  # CORRIGIDO: Agora é Integer
+    id = Column(Integer, primary_key=True)
+    team_project_id = Column(Integer)  # Correto (Integer)
     title = Column(String)
     description = Column(Text)
     tags = Column(JSON)
@@ -40,10 +44,11 @@ class Epic(Base):
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
+
 class Feature(Base):
     __tablename__ = "features"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para epic (parent)
+    parent = Column(Integer, ForeignKey('epics.id'))
     title = Column(String)
     description = Column(Text)
     version = Column(Integer, default=1)
@@ -58,10 +63,11 @@ class Feature(Base):
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
+
 class UserStory(Base):
     __tablename__ = "user_stories"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('features.id'))  # Chave estrangeira para feature (parent)
+    parent = Column(Integer, ForeignKey('features.id'))
     title = Column(String)
     description = Column(Text)
     acceptance_criteria = Column(Text)
@@ -77,10 +83,11 @@ class UserStory(Base):
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
+
 class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para user story (parent)
+    parent = Column(Integer, ForeignKey('user_stories.id'))
     title = Column(String)
     description = Column(Text)
     version = Column(Integer, default=1)
@@ -95,7 +102,8 @@ class Task(Base):
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
-class Bug(Base):  # Adicionado campos
+
+class Bug(Base):  # Não vamos alterar por enquanto
     __tablename__ = "bugs"
     id = Column(Integer, primary_key=True)
     issue_id = Column(Integer, ForeignKey('issues.id'), nullable=True)
@@ -117,7 +125,8 @@ class Bug(Base):  # Adicionado campos
     parent_board_id = Column(String, nullable=True)
 
 
-class Issue(Base):# Adicionado campos
+
+class Issue(Base):# Não vamos alterar por enquanto
     __tablename__ = "issues"
     id = Column(Integer, primary_key=True)
     user_story_id = Column(Integer, ForeignKey('user_stories.id'))
@@ -136,7 +145,8 @@ class Issue(Base):# Adicionado campos
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
-class PBI(Base):# Adicionado campos
+
+class PBI(Base):# Não vamos alterar por enquanto
     __tablename__ = "pbis"
     id = Column(Integer, primary_key=True)
     feature_id = Column(Integer, ForeignKey('features.id'))
@@ -155,6 +165,7 @@ class PBI(Base):# Adicionado campos
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
+
 class Request(Base):
     __tablename__ = "requests"
     id = Column(Integer, primary_key=True)
@@ -167,8 +178,8 @@ class Request(Base):
     error_message = Column(Text)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-# ---  Tabelas para Test Case (Gherkin e Actions) ---
 
+# ---  Tabelas para Test Case (Gherkin e Actions) ---
 class TestCase(Base):
     __tablename__ = "test_cases"
     id = Column(Integer, primary_key=True)
@@ -188,6 +199,7 @@ class TestCase(Base):
     gherkin = relationship("Gherkin", uselist=False, back_populates="test_case")  # Relacionamento 1:1 com Gherkin
     actions = relationship("Action", back_populates="test_case")  # Relacionamento 1:N com Action
 
+
 class Gherkin(Base):
     __tablename__ = "gherkin"
     id = Column(Integer, primary_key=True)
@@ -201,6 +213,7 @@ class Gherkin(Base):
     is_active = Column(Boolean, default=True) # Adicionado
     test_case = relationship("TestCase", back_populates="gherkin") # Relacionamento com TestCase
 
+
 class Action(Base):
     __tablename__ = "actions"
     id = Column(Integer, primary_key=True)
@@ -210,3 +223,22 @@ class Action(Base):
     version = Column(Integer, default=1) # Adicionado
     is_active = Column(Boolean, default=True) # Adicionado
     test_case = relationship("TestCase", back_populates="actions") # Relacionamento com TestCase
+
+
+# --- Tabela para WBS ---
+class WBS(Base):
+    __tablename__ = "wbs"
+    id = Column(Integer, primary_key=True)
+    parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para Epic
+    wbs = Column(JSON)  # Armazena a WBS como JSON
+    version = Column(Integer, default=1)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    feedback = Column(Text, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    summary = Column(Text, nullable=True)
+    reflection = Column(Text, nullable=True)
+    work_item_id = Column(String, nullable=True)
+    parent_board_id = Column(String, nullable=True)

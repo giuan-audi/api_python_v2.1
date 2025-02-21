@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 import logging
 
-logger = logging.getLogger(__name__)  # Adicione o logger
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -29,5 +29,5 @@ def get_db():
         db.close()
 
 
-# def create_tables():
-#     Base.metadata.create_all(bind=engine)
+def create_tables():
+    Base.metadata.create_all(bind=engine)

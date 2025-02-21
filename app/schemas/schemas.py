@@ -38,7 +38,8 @@ class TaskTypeEnum(str, Enum):
     BUG = "bug"
     ISSUE = "issue"
     PBI = "pbi"
-    TEST_CASE = 'test_case' # Adicionado
+    TEST_CASE = 'test_case'
+    WBS = "wbs" # Adicionado
 
 
 class PromptData(BaseModel):
@@ -81,16 +82,18 @@ class EpicResponse(BaseModel):
 class FeatureResponse(BaseModel):
     title: str = Field(..., description="Título da Feature.")  # Renomeado de name para title
     description: str = Field(..., description="Descrição detalhada da Feature.")
-    # value removido
+
 
 class UserStoryResponse(BaseModel):
     title: str = Field(..., description="Título da User Story.")
     description: str = Field(..., description="Descrição detalhada da User Story.")
     acceptance_criteria: str = Field(..., description="Critérios de aceite da User Story.")  # Renomeado
 
+
 class TaskResponse(BaseModel):
     title: str = Field(..., description="Título da Task.")  # Renomeado
     description: str = Field(..., description="Descrição detalhada da Task.")
+
 
 # ---  Schemas para Bug, Issue e PBI  ---
 class BugResponse(BaseModel):# Não vamos alterar por enquanto
@@ -99,30 +102,41 @@ class BugResponse(BaseModel):# Não vamos alterar por enquanto
     systemInfo: str = Field(..., description="Informações do sistema onde o Bug ocorre.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao Bug.")
 
+
 class IssueResponse(BaseModel):# Não vamos alterar por enquanto
     title: str = Field(..., description="Título da Issue.")
     description: str = Field(..., description="Descrição detalhada da Issue.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas à Issue.")
+
 
 class PBIResponse(BaseModel):# Não vamos alterar por enquanto
     title: str = Field(..., description="Título do PBI.")
     description: str = Field(..., description="Descrição detalhada do PBI.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao PBI.")
 
+
 # ---  Schemas para Test Case  ---
 class GherkinResponse(BaseModel):
-    # feature: str = Field(..., description="Funcionalidade sendo testada (Feature).")  # CORRIGIDO: Agora é feature
+    feature: str = Field(..., description="Funcionalidade sendo testada (Feature).")  # CORRIGIDO: Agora é feature
     title: str = Field(..., description="Título do cenário Gherkin.")  # Adicionado o title
     scenario: str = Field(..., description="Descrição do cenário Gherkin.")
     given: str = Field(..., description="Pré-condições do cenário (Dado que...).")
     when: str = Field(..., description="Ações do cenário (Quando...).")
     then: str = Field(..., description="Resultados esperados do cenário (Então...).")
 
+
 class ActionResponse(BaseModel):
     step: str = Field(..., description="Passo da ação.")
     expected_result: str = Field(..., description="Resultado esperado da ação.")
 
+
 class TestCaseResponse(BaseModel):
-    parent: int = Field(..., description="ID da User Story associada.")  # CORRIGIDO: Agora é int
+    # Removido o id, pois será gerado automaticamente
+    parent: int = Field(..., description="ID da User Story associada.")
     gherkin: GherkinResponse = Field(..., description="Dados Gherkin do caso de teste.")
     actions: List[ActionResponse] = Field(..., description="Lista de ações do caso de teste.")
+
+
+#--- Schema para WBS ---
+class WBSResponse(BaseModel): # Schema para WBS
+    wbs: List[Dict[str, Any]] = Field(..., description="Estrutura da WBS em formato JSON.")

@@ -1,10 +1,9 @@
 import json
-from typing import List
-from app.models import Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action
-from app.schemas.schemas import EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse, BugResponse, IssueResponse, PBIResponse, TestCaseResponse, GherkinResponse, ActionResponse  # Importe os novos schemas
+from typing import List, Any, Dict
+from app.models import Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action, WBS
+from app.schemas.schemas import EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse, BugResponse, IssueResponse, PBIResponse, TestCaseResponse, GherkinResponse, ActionResponse, WBSResponse
 from pydantic import ValidationError
 import logging
-
 
 logger = logging.getLogger(__name__)
 
@@ -86,41 +85,37 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
 
 def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[TestCase]:
     try:
-        # A resposta JSON já é um dicionário, NÃO uma lista.
         test_case_data = json.loads(response)
-
-        # Validar o test_case:
-        validated_test_case = TestCaseResponse(**test_case_data)
-
-        # Agora podemos criar o objeto TestCase
+        validated_test_case = TestCaseResponse(**test_case_data)  # Valida o caso de teste principal
+        # Crie o TestCase
         test_case = TestCase(
-            parent=parent_id,  # Usar o parent_id (inteiro) que veio da task Celery
+            parent=parent_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            # Não precisamos mais do ID, ele é gerado automaticamente
+            # Não definimos title aqui, pois vem do Gherkin
         )
 
-        # Criar o Gherkin
-        gherkin_data = validated_test_case.gherkin # Objeto validado
+        # Crie o Gherkin (1:1 com TestCase)
+        gherkin_data = validated_test_case.gherkin
         gherkin = Gherkin(
-            title = gherkin_data.title, # Usar title
+            title=gherkin_data.title,
             scenario=gherkin_data.scenario,
             given=gherkin_data.given,
             when=gherkin_data.when,
             then=gherkin_data.then
         )
-        test_case.gherkin = gherkin
+        test_case.gherkin = gherkin  # Associa o Gherkin ao TestCase
 
-        # Criar as Actions
+        # Crie as Actions (1:N com TestCase)
         for action_data in validated_test_case.actions:
-            #  validated_action = ActionResponse(**action_data) # REMOVER: Já validado!
+            #validated_action = ActionResponse(**action_data)  # Valida cada ação - Removido, redundante
             action = Action(
-                step=action_data.step,  # Usar diretamente o action_data (já validado)
-                expected_result=action_data.expected_result  # Usar diretamente
+                step=action_data.step,  # Acessa diretamente os atributos
+                expected_result=action_data.expected_result  # Acessa diretamente os atributos
             )
-            test_case.actions.append(action)
+            test_case.actions.append(action)  # Adiciona a ação à lista de ações do TestCase
 
-        return [test_case]  # Retornar uma lista (mesmo que contenha apenas um elemento)
+        return [test_case]  # Retorna uma lista com um único TestCase
 
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de TestCase: {str(e)}"
@@ -186,5 +181,22 @@ def parse_pbi_response(response: str, feature_id: int, prompt_tokens: int, compl
         ]
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de PBI: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        raise ValueError(error_message)
+
+
+def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> WBS:
+    '''Função para criar a WBS'''
+    try:
+        data = json.loads(response)
+        validated_response = WBSResponse(**data)
+        return WBS(
+            parent=parent_id,
+            wbs=validated_response.wbs,  # Salva o JSON da WBS diretamente
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens
+        )
+    except (json.JSONDecodeError, KeyError, ValidationError) as e:
+        error_message = f"Erro ao parsear resposta de WBS: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
