@@ -7,14 +7,13 @@ from app.utils import parsers, rabbitmq
 import logging
 from datetime import datetime
 from app.celery import celery_app
-import pika
+from sqlalchemy.exc import IntegrityError
 import openai
 import google.api_core.exceptions
 import requests
 
 logger = logging.getLogger(__name__)
 llm_agent = LLMAgent()
-
 
 @celery_app.task(
     name="process_demand_task",
@@ -33,9 +32,9 @@ llm_agent = LLMAgent()
         "retry_jitter": True
     }
 )
-def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None):
+def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None, work_item_id=None, parent_board_id=None): # Argumentos adicionais
     db = SessionLocal()
-    producer = rabbitmq.RabbitMQProducer()  # Instancia o producer
+    producer = rabbitmq.RabbitMQProducer()
     try:
         logger.info(f"Task Celery 'process_demand_task' iniciada para request_id: {request_id_interno}, task_type: {task_type}")
 
@@ -55,9 +54,9 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             logger.error(error_message)
             return
 
-        parent_str = db_request.parent  #  parent como STRING
+        parent_str = db_request.parent
         try:
-            parent = int(parent_str)  # CONVERTER para INT
+            parent = int(parent_str)
         except ValueError:
             error_message = f"parent inválido (não é um inteiro): {parent_str}"
             logger.error(error_message)
@@ -97,17 +96,17 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
 
             # 1. Obter itens existentes do mesmo tipo e com o mesmo parent/epic_id/feature_id/etc.
             if task_type_enum == TaskType.EPIC:
-                existing_items = db.query(Epic).filter(Epic.team_project_id == parent, Epic.is_active == True).all()  # Filtrar por team_project_id e is_active
+                existing_items = db.query(Epic).filter(Epic.team_project_id == parent, Epic.is_active == True).all()
             elif task_type_enum == TaskType.FEATURE:
-                existing_items = db.query(Feature).filter(Feature.parent == parent, Feature.is_active == True).all()  # Usar parent
+                existing_items = db.query(Feature).filter(Feature.parent == parent, Feature.is_active == True).all()
             elif task_type_enum == TaskType.USER_STORY:
-                existing_items = db.query(UserStory).filter(UserStory.parent == parent, UserStory.is_active == True).all()  # Usar parent
+                existing_items = db.query(UserStory).filter(UserStory.parent == parent, UserStory.is_active == True).all()
             elif task_type_enum == TaskType.TASK:
-                existing_items = db.query(Task).filter(Task.parent == parent, Task.is_active == True).all()  # Usar parent
+                existing_items = db.query(Task).filter(Task.parent == parent, Task.is_active == True).all()
             elif task_type_enum == TaskType.BUG:
-                existing_items = db.query(Bug).filter(Bug.issue_id == parent, Bug.is_active == True).all()  # Ajuste conforme necessário
+                existing_items = db.query(Bug).filter(Bug.issue_id == parent, Bug.is_active == True).all()
             elif task_type_enum == TaskType.ISSUE:
-                existing_items = db.query(Issue).filter(Issue.user_story_id == parent, Issue.is_active == True).all()  # Ajuste conforme necessário
+                existing_items = db.query(Issue).filter(Issue.user_story_id == parent, Issue.is_active == True).all()
             elif task_type_enum == TaskType.PBI:
                 existing_items = db.query(PBI).filter(PBI.feature_id == parent, PBI.is_active == True).all()
             elif task_type_enum == TaskType.TEST_CASE:
@@ -135,62 +134,75 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             # 4. Criar e adicionar os novos itens
             if task_type_enum == TaskType.EPIC:
                 new_epic = parsers.parse_epic_response(generated_text, prompt_tokens, completion_tokens)
-                new_epic.team_project_id = str(db_request.parent)  # Salva o team_project_id
+                new_epic.team_project_id = str(db_request.parent)  # Salva o team_project_id (string)
                 new_epic.version = new_version
                 new_epic.is_active = True
+                new_epic.work_item_id = work_item_id  #<-- Atribuir work_item_id
+                new_epic.parent_board_id = parent_board_id  #<-- Atribuir parent_board_id
                 db.add(new_epic)
-                db.flush()  # Força o INSERT e a obtenção do ID autoincremental
-                db.refresh(new_epic) # Atualiza o objeto new_epic com os dados do banco (incluindo o ID)
-                item_id = [new_epic.id]    # <---  AGORA o ID está disponível!
+                db.flush()
+                db.refresh(new_epic)
+                item_id = [new_epic.id]
             elif task_type_enum == TaskType.FEATURE:
                 new_features = parsers.parse_feature_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for feature in new_features:
                     feature.version = new_version
                     feature.is_active = True
+                    feature.work_item_id = work_item_id  #<-- Atribuir
+                    feature.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_features)
-                db.flush()  # Força o INSERT
-                item_id = [f.id for f in new_features]  # IDs agora disponíveis
+                db.flush()
+                item_id = [f.id for f in new_features]
             elif task_type_enum == TaskType.USER_STORY:
                 new_user_stories = parsers.parse_user_story_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for us in new_user_stories:
                     us.version = new_version
                     us.is_active = True
+                    us.work_item_id = work_item_id  #<-- Atribuir
+                    us.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_user_stories)
-                db.flush()  # Força o INSERT
-                item_id = [us.id for us in new_user_stories]  # IDs agora disponíveis
+                db.flush()
+                item_id = [us.id for us in new_user_stories]
             elif task_type_enum == TaskType.TASK:
                 new_tasks = parsers.parse_task_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for task in new_tasks:
                     task.version = new_version
                     task.is_active = True
+                    task.work_item_id = work_item_id  #<-- Atribuir
+                    task.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_tasks)
-                db.flush()  # Força o INSERT
-                item_id = [t.id for t in new_tasks]  # IDs agora disponíveis
+                db.flush()
+                item_id = [t.id for t in new_tasks]
             elif task_type_enum == TaskType.BUG:
-                new_bugs = parsers.parse_bug_response(generated_text, parent, parent, prompt_tokens, completion_tokens)  # Corrigido: request_id_client para issue_id e user_story_id
+                new_bugs = parsers.parse_bug_response(generated_text, parent, parent, prompt_tokens, completion_tokens)
                 for bug in new_bugs:
                     bug.version = new_version
                     bug.is_active = True
+                    bug.work_item_id = work_item_id  #<-- Atribuir
+                    bug.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_bugs)
-                db.flush()  # Força o INSERT
-                item_id = [b.id for b in new_bugs] # Lista de IDs
+                db.flush()
+                item_id = [b.id for b in new_bugs]
             elif task_type_enum == TaskType.ISSUE:
                 new_issues = parsers.parse_issue_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for issue in new_issues:
                     issue.version = new_version
                     issue.is_active = True
+                    issue.work_item_id = work_item_id  #<-- Atribuir
+                    issue.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_issues)
-                db.flush()  # Força o INSERT
-                item_id = [i.id for i in new_issues]   # Lista de IDs
+                db.flush()
+                item_id = [i.id for i in new_issues]
             elif task_type_enum == TaskType.PBI:
                 new_pbis = parsers.parse_pbi_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for pbi in new_pbis:
                     pbi.version = new_version
                     pbi.is_active = True
+                    pbi.work_item_id = work_item_id  #<-- Atribuir
+                    pbi.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_pbis)
-                db.flush()  # Força o INSERT
+                db.flush()
                 item_id = [p.id for p in new_pbis]  # Lista de IDs
-
             elif task_type_enum == TaskType.TEST_CASE:
                 new_test_cases = parsers.parse_test_case_response(generated_text, parent, prompt_tokens, completion_tokens)
                 for test_case in new_test_cases:
@@ -203,14 +215,19 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                     for action in test_case.actions:
                         action.version = new_version
                         action.is_active = True
+                    test_case.work_item_id = work_item_id  #<-- Atribuir
+                    test_case.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_test_cases)  # Salva TestCase, Gherkin e Actions em cascata
                 db.flush()
                 item_id = [tc.id for tc in new_test_cases]  # Lista de IDs dos test cases
+
             elif task_type_enum == TaskType.WBS:
                 new_wbs = parsers.parse_wbs_response(generated_text, parent, prompt_tokens, completion_tokens)
                 new_wbs.version = new_version  # Define a versão
                 new_wbs.is_active = True  # Define como ativo
-                db.add(new_wbs)  # Adiciona o novo WBS ao banco
+                new_wbs.work_item_id = work_item_id  #<-- Atribuir
+                new_wbs.parent_board_id = parent_board_id  #<-- Atribuir
+                db.add(new_wbs) # Adiciona o novo WBS ao banco
                 db.flush()
                 db.refresh(new_wbs)  # Atualiza o objeto para obter o ID gerado
                 item_id = [new_wbs.id]   # Cria uma lista com o ID do novo WBS

@@ -117,7 +117,6 @@ class PBIResponse(BaseModel):# Não vamos alterar por enquanto
 
 # ---  Schemas para Test Case  ---
 class GherkinResponse(BaseModel):
-    feature: str = Field(..., description="Funcionalidade sendo testada (Feature).")  # CORRIGIDO: Agora é feature
     title: str = Field(..., description="Título do cenário Gherkin.")  # Adicionado o title
     scenario: str = Field(..., description="Descrição do cenário Gherkin.")
     given: str = Field(..., description="Pré-condições do cenário (Dado que...).")

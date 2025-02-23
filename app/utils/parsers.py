@@ -85,37 +85,37 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
 
 def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[TestCase]:
     try:
-        test_case_data = json.loads(response)
-        validated_test_case = TestCaseResponse(**test_case_data)  # Valida o caso de teste principal
-        # Crie o TestCase
+        # A resposta JSON já é um dicionário, NÃO uma lista
+        test_case_data = json.loads(response)  
+
+        # Validar e criar o TestCase diretamente
+        validated_test_case = TestCaseResponse(**test_case_data)
         test_case = TestCase(
             parent=parent_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            # Não definimos title aqui, pois vem do Gherkin
         )
 
-        # Crie o Gherkin (1:1 com TestCase)
+        # Criar o Gherkin
         gherkin_data = validated_test_case.gherkin
         gherkin = Gherkin(
-            title=gherkin_data.title,
+            title=gherkin_data.title,  # Usar title
             scenario=gherkin_data.scenario,
             given=gherkin_data.given,
             when=gherkin_data.when,
             then=gherkin_data.then
         )
-        test_case.gherkin = gherkin  # Associa o Gherkin ao TestCase
+        test_case.gherkin = gherkin
 
-        # Crie as Actions (1:N com TestCase)
+        # Criar as Actions
         for action_data in validated_test_case.actions:
-            #validated_action = ActionResponse(**action_data)  # Valida cada ação - Removido, redundante
             action = Action(
-                step=action_data.step,  # Acessa diretamente os atributos
-                expected_result=action_data.expected_result  # Acessa diretamente os atributos
+                step=action_data.step,
+                expected_result=action_data.expected_result
             )
-            test_case.actions.append(action)  # Adiciona a ação à lista de ações do TestCase
+            test_case.actions.append(action)
 
-        return [test_case]  # Retorna uma lista com um único TestCase
+        return [test_case]  # Retorna uma lista com UM único TestCase
 
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de TestCase: {str(e)}"

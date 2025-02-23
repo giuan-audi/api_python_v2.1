@@ -35,7 +35,9 @@ async def generate(request: RequestSchema, db: Session = Depends(get_db)):
             "request_id_interno": db_request.request_id,  # Passar o ID interno da requisição
             "task_type": request.task_type.value,  # Passar o task_type como string (valor do enum)
             "prompt_data": request.prompt_data.dict(),  # Passar os dados do prompt
-            "llm_config": llm_config.dict()  # Passar as configurações da LLM (opcional)
+            "llm_config": llm_config.dict(),  # Passar as configurações da LLM (opcional)
+            "work_item_id": request.work_item_id,  # <-- Passando para a task
+            "parent_board_id": request.parent_board_id
         }
 
         # Enviar a task para o Celery
