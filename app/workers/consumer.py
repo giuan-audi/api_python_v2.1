@@ -10,6 +10,7 @@ from app.celery import celery_app
 from sqlalchemy.exc import IntegrityError
 import openai
 import google.api_core.exceptions
+import pika
 import requests
 
 logger = logging.getLogger(__name__)
