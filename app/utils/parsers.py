@@ -47,7 +47,7 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
 def parse_user_story_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[UserStory]:
     try:
         user_stories = json.loads(response)
-        validated_user_stories = [UserStoryResponse(**story["userStory"]) for story in user_stories]
+        validated_user_stories = [UserStoryResponse(**story) for story in user_stories] # <-- CORRIGIDO: Sem ["userStory"]
         return [
             UserStory(
                 parent=parent_id,
@@ -67,7 +67,7 @@ def parse_user_story_response(response: str, parent_id: int, prompt_tokens: int,
 def parse_task_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[Task]:
     try:
         tasks = json.loads(response)
-        validated_tasks = [TaskResponse(**task["task"]) for task in tasks]
+        validated_tasks = [TaskResponse(**task) for task in tasks]  # <-- CORRIGIDO: Sem ["task"]
         return [
             Task(
                 parent=parent_id,
