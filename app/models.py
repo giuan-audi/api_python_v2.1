@@ -16,7 +16,8 @@ class TaskType(enum.Enum):
     ISSUE = "issue"
     PBI = "pbi"
     TEST_CASE = "test_case"
-    WBS = "wbs"  # Adicionado WBS
+    WBS = "wbs"
+    AUTOMATION_SCRIPT = "automation_script"
 
 
 class Status(enum.Enum):
@@ -240,5 +241,24 @@ class WBS(Base):
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
     reflection = Column(JSON)
+    work_item_id = Column(String, nullable=True)
+    parent_board_id = Column(String, nullable=True)
+
+
+# --- Tabela para Automation Script ---
+class AutomationScript(Base):
+    __tablename__ = "automation_scripts"
+    id = Column(Integer, primary_key=True)
+    parent = Column(Integer, ForeignKey('test_cases.id'))  # Chave estrangeira para TestCase
+    script = Column(Text) # Tipo TEXT para armazenar scripts longos
+    version = Column(Integer, default=1)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    feedback = Column(Text, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    summary = Column(Text, nullable=True)
+    reflection = Column(Text, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)

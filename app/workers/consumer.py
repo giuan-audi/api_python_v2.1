@@ -2,7 +2,7 @@ import json
 from app.agents.llm_agent import LLMAgent
 from app.database import SessionLocal
 from sqlalchemy.orm import Session
-from app.models import Request, Status, TaskType, Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action, WBS
+from app.models import Request, Status, TaskType, Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action, WBS, AutomationScript
 from app.utils import parsers, rabbitmq
 import logging
 from datetime import datetime
@@ -10,11 +10,11 @@ from app.celery import celery_app
 from sqlalchemy.exc import IntegrityError
 import openai
 import google.api_core.exceptions
-import pika
 import requests
 
 logger = logging.getLogger(__name__)
 llm_agent = LLMAgent()
+
 
 @celery_app.task(
     name="process_demand_task",
@@ -33,7 +33,7 @@ llm_agent = LLMAgent()
         "retry_jitter": True
     }
 )
-def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None, work_item_id=None, parent_board_id=None):  # Argumentos adicionais
+def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None, work_item_id=None, parent_board_id=None):
     db = SessionLocal()
     producer = rabbitmq.RabbitMQProducer()  # Instancia o producer
     try:
@@ -55,7 +55,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             logger.error(error_message)
             return
 
-        parent_str = db_request.parent  # parent como STRING
+        parent_str = db_request.parent
         try:
             parent = int(parent_str)  # CONVERTER para INT
         except ValueError:
@@ -114,21 +114,18 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 existing_items = db.query(TestCase).filter(TestCase.parent == parent, TestCase.is_active == True).all()
             elif task_type_enum == TaskType.WBS:
                 existing_items = db.query(WBS).filter(WBS.parent == parent, WBS.is_active == True).all()
+            elif task_type_enum == TaskType.AUTOMATION_SCRIPT: # Adicionado
+                existing_items = db.query(AutomationScript).filter(AutomationScript.parent == parent, AutomationScript.is_active == True).all()
             else:
                 error_message = f"Task type desconhecido: {task_type_enum.value}"
                 logger.error(error_message)
                 update_request_status(db, request_id_interno, Status.FAILED, error_message)
                 return
 
-            # 2. Desativar itens existentes (e seus filhos, no caso de TestCase)
+            # 2. Desativar itens existentes
             for item in existing_items:
                 item.is_active = False
                 item.updated_at = datetime.now()
-                if task_type_enum == TaskType.TEST_CASE:  # Desativar Gherkin e Actions
-                    if item.gherkin:
-                        item.gherkin.is_active = False
-                    for action in item.actions:
-                        action.is_active = False
 
             # 3. Determinar a nova versão
             if existing_items:
@@ -143,8 +140,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 new_epic.team_project_id = str(db_request.parent)  # Salva o team_project_id (string)
                 new_epic.version = new_version
                 new_epic.is_active = True
-                new_epic.work_item_id = work_item_id  # <-- Adicionado
-                new_epic.parent_board_id = parent_board_id  # <-- Adicionado
+                new_epic.work_item_id = work_item_id  #<-- Atribuir
+                new_epic.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add(new_epic)
                 db.flush()  # Força o INSERT e a obtenção do ID autoincremental
                 db.refresh(new_epic) # Atualiza o objeto new_epic com os dados do banco (incluindo o ID)
@@ -154,8 +151,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for feature in new_features:
                     feature.version = new_version
                     feature.is_active = True
-                    feature.work_item_id = work_item_id  # <-- Adicionado
-                    feature.parent_board_id = parent_board_id  # <-- Adicionado
+                    feature.work_item_id = work_item_id  #<-- Atribuir
+                    feature.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_features)
                 db.flush()
                 item_id = [f.id for f in new_features]  # Lista de IDs
@@ -164,8 +161,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for us in new_user_stories:
                     us.version = new_version
                     us.is_active = True
-                    us.work_item_id = work_item_id  # <-- Adicionado
-                    us.parent_board_id = parent_board_id  # <-- Adicionado
+                    us.work_item_id = work_item_id  #<-- Atribuir
+                    us.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_user_stories)
                 db.flush()
                 item_id = [us.id for us in new_user_stories]  # Lista de IDs
@@ -174,8 +171,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for task in new_tasks:
                     task.version = new_version
                     task.is_active = True
-                    task.work_item_id = work_item_id  # <-- Adicionado
-                    task.parent_board_id = parent_board_id  # <-- Adicionado
+                    task.work_item_id = work_item_id  #<-- Atribuir
+                    task.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_tasks)
                 db.flush()
                 item_id = [t.id for t in new_tasks]  # Lista de IDs
@@ -184,8 +181,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for bug in new_bugs:
                     bug.version = new_version
                     bug.is_active = True
-                    bug.work_item_id = work_item_id  # <-- Adicionado
-                    bug.parent_board_id = parent_board_id  # <-- Adicionado
+                    bug.work_item_id = work_item_id  #<-- Atribuir
+                    bug.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_bugs)
                 db.flush()
                 item_id = [b.id for b in new_bugs] # Lista de IDs
@@ -194,8 +191,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for issue in new_issues:
                     issue.version = new_version
                     issue.is_active = True
-                    issue.work_item_id = work_item_id  # <-- Adicionado
-                    issue.parent_board_id = parent_board_id  # <-- Adicionado
+                    issue.work_item_id = work_item_id  #<-- Atribuir
+                    issue.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_issues)
                 db.flush()
                 item_id = [i.id for i in new_issues]   # Lista de IDs
@@ -204,8 +201,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for pbi in new_pbis:
                     pbi.version = new_version
                     pbi.is_active = True
-                    pbi.work_item_id = work_item_id  # <-- Adicionado
-                    pbi.parent_board_id = parent_board_id  # <-- Adicionado
+                    pbi.work_item_id = work_item_id  #<-- Atribuir
+                    pbi.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_pbis)
                 db.flush()
                 item_id = [p.id for p in new_pbis]  # Lista de IDs
@@ -222,8 +219,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                     for action in test_case.actions:
                         action.version = new_version
                         action.is_active = True
-                    test_case.work_item_id = work_item_id  # <-- Atribuir
-                    test_case.parent_board_id = parent_board_id  # <-- Atribuir
+                    test_case.work_item_id = work_item_id  #<-- Atribuir
+                    test_case.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add_all(new_test_cases)  # Salva TestCase, Gherkin e Actions em cascata
                 db.flush()
                 item_id = [tc.id for tc in new_test_cases]  # Lista de IDs dos test cases
@@ -231,12 +228,29 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 new_wbs = parsers.parse_wbs_response(generated_text, parent, prompt_tokens, completion_tokens)
                 new_wbs.version = new_version  # Define a versão
                 new_wbs.is_active = True  # Define como ativo
-                new_wbs.work_item_id = work_item_id  # <-- Atribuir
-                new_wbs.parent_board_id = parent_board_id  # <-- Atribuir
+                new_wbs.work_item_id = work_item_id  #<-- Atribuir
+                new_wbs.parent_board_id = parent_board_id  #<-- Atribuir
                 db.add(new_wbs) # Adiciona o novo WBS ao banco
                 db.flush()
                 db.refresh(new_wbs)  # Atualiza o objeto para obter o ID gerado
                 item_id = [new_wbs.id]   # Cria uma lista com o ID do novo WBS
+
+            elif task_type_enum == TaskType.AUTOMATION_SCRIPT:
+                # Aqui, assumimos que generated_text JÁ CONTÉM o script completo
+                new_script = AutomationScript(
+                    parent=parent,
+                    script=generated_text,  # Salva o script GERADO pela LLM
+                    version=new_version,
+                    is_active=True,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    work_item_id=work_item_id,
+                    parent_board_id=parent_board_id
+                )
+                db.add(new_script)
+                db.flush()
+                db.refresh(new_script)
+                item_id = [new_script.id]
 
             db.commit()
             logger.info(f"Resposta processada e salva no banco de dados para request_id: {request_id_interno}, task_type: {task_type_enum.value}")

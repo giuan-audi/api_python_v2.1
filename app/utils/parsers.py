@@ -1,7 +1,7 @@
 import json
 from typing import List, Any, Dict
-from app.models import Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action, WBS
-from app.schemas.schemas import EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse, BugResponse, IssueResponse, PBIResponse, TestCaseResponse, GherkinResponse, ActionResponse, WBSResponse
+from app.models import Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Gherkin, Action, WBS, AutomationScript
+from app.schemas.schemas import EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse, BugResponse, IssueResponse, PBIResponse, TestCaseResponse, GherkinResponse, ActionResponse, WBSResponse, AutomationScriptResponse
 from pydantic import ValidationError
 import logging
 
@@ -247,5 +247,23 @@ def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, comple
         )
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de WBS: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        raise ValueError(error_message)
+
+
+def parse_automation_script_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> AutomationScript:
+    """
+    Função para analisar a resposta da LLM para a geração de scripts de automação.
+    Assume que a resposta é uma string com o script.
+    """
+    try:
+        return AutomationScript(
+            parent=parent_id,
+            script=response,  # Salva o script diretamente (string)
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens
+        )
+    except Exception as e:
+        error_message = f"Erro ao parsear resposta de Automation Script: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)

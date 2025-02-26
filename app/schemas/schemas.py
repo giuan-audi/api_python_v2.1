@@ -40,7 +40,8 @@ class TaskTypeEnum(str, Enum):
     ISSUE = "issue"
     PBI = "pbi"
     TEST_CASE = 'test_case'
-    WBS = "wbs" # Adicionado
+    WBS = "wbs"
+    AUTOMATION_SCRIPT = "automation_script"
 
 
 class PromptData(BaseModel):
@@ -142,7 +143,6 @@ class ActionResponse(BaseModel):
 
 
 class TestCaseResponse(BaseModel):
-    # Removido o id, pois será gerado automaticamente
     parent: int = Field(..., description="ID da User Story associada.")
     gherkin: GherkinResponse = Field(..., description="Dados Gherkin do caso de teste.")
     actions: List[ActionResponse] = Field(..., description="Lista de ações do caso de teste.")
@@ -151,3 +151,8 @@ class TestCaseResponse(BaseModel):
 #--- Schema para WBS ---
 class WBSResponse(BaseModel): # Schema para WBS
     wbs: List[Dict[str, Any]] = Field(..., description="Estrutura da WBS em formato JSON.")
+
+
+# --- Schema para Automation Script ---
+class AutomationScriptResponse(BaseModel):
+    script: str = Field(..., description="Script de automação gerado (em formato de comentário).")
