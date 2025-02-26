@@ -40,7 +40,7 @@ class Epic(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -59,7 +59,7 @@ class Feature(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -79,7 +79,7 @@ class UserStory(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -98,7 +98,7 @@ class Task(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -120,7 +120,7 @@ class Bug(Base):  # Não vamos alterar por enquanto
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -141,7 +141,7 @@ class Issue(Base):# Não vamos alterar por enquanto
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -161,7 +161,7 @@ class PBI(Base):# Não vamos alterar por enquanto
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -192,7 +192,7 @@ class TestCase(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)          # Adicionado (nullable)
-    reflection = Column(Text, nullable=True)       # Adicionado (nullable)
+    reflection = Column(JSON)       # Adicionado (nullable)
     work_item_id = Column(String, nullable=True)     # Adicionado (nullable)
     parent_board_id = Column(String, nullable=True)  # Adicionado (nullable)
 
@@ -239,6 +239,6 @@ class WBS(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)

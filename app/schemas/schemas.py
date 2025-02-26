@@ -4,6 +4,7 @@ from enum import Enum
 from datetime import datetime
 
 
+# ... (LLMConfig, TaskTypeEnum, PromptData, Request, Response, StatusResponse - SEM MUDANÇAS) ...
 class LLMConfig(BaseModel):
     llm: Optional[str] = Field("openai", description="LLM a ser usada (openai ou gemini).")
     model: Optional[str] = Field(None, description="Modelo da LLM a ser usado.")
@@ -73,51 +74,62 @@ class StatusResponse(BaseModel):
     processed_at: Optional[datetime] = Field(None, description="Data de processamento da requisição (se completada).")
 
 
+class ReflectionResponse(BaseModel): # Precisa do response
+    problem: str
+    users: str
+    features: List[str]
+    challenges: str
+
+
 class EpicResponse(BaseModel):
     title: str = Field(..., description="Título do Épico.")
     description: str = Field(..., description="Descrição detalhada do Épico.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao Épico.")
+    reflection: ReflectionResponse = Field(..., description="Reflexão sobre o Épico") # Adicionado
 
 
+# ---  Schemas para os de Feature, user story, task, test case ---
 class FeatureResponse(BaseModel):
-    title: str = Field(..., description="Título da Feature.")  # Renomeado de name para title
+    title: str = Field(..., description="Título da Feature.")
     description: str = Field(..., description="Descrição detalhada da Feature.")
+    reflection: Dict[str, Any] = Field(..., description="Reflexão sobre a Feature.")
 
 
 class UserStoryResponse(BaseModel):
     title: str = Field(..., description="Título da User Story.")
     description: str = Field(..., description="Descrição detalhada da User Story.")
-    acceptance_criteria: str = Field(..., description="Critérios de aceite da User Story.")  # Renomeado
+    acceptance_criteria: str = Field(..., description="Critérios de aceite da User Story.")
 
 
 class TaskResponse(BaseModel):
-    title: str = Field(..., description="Título da Task.")  # Renomeado
+    title: str = Field(..., description="Título da Task.")
     description: str = Field(..., description="Descrição detalhada da Task.")
 
 
-# ---  Schemas para Bug, Issue e PBI  ---
-class BugResponse(BaseModel):# Não vamos alterar por enquanto
+# ---  Schemas para Bug, Issue e PBI (Não serão alterados por enquanto) ---
+class BugResponse(BaseModel):
     title: str = Field(..., description="Título do Bug.")
     reproSteps: str = Field(..., description="Passos para reprodução do Bug.")
     systemInfo: str = Field(..., description="Informações do sistema onde o Bug ocorre.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao Bug.")
 
 
-class IssueResponse(BaseModel):# Não vamos alterar por enquanto
+class IssueResponse(BaseModel):
     title: str = Field(..., description="Título da Issue.")
     description: str = Field(..., description="Descrição detalhada da Issue.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas à Issue.")
 
 
-class PBIResponse(BaseModel):# Não vamos alterar por enquanto
+class PBIResponse(BaseModel):
     title: str = Field(..., description="Título do PBI.")
     description: str = Field(..., description="Descrição detalhada do PBI.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao PBI.")
 
 
-# ---  Schemas para Test Case  ---
+# --- Schemas para Test Case ---
 class GherkinResponse(BaseModel):
-    title: str = Field(..., description="Título do cenário Gherkin.")  # Adicionado o title
+    feature: str = Field(..., description="Funcionalidade sendo testada (Feature).")
+    title: str = Field(..., description="Título do cenário Gherkin.")
     scenario: str = Field(..., description="Descrição do cenário Gherkin.")
     given: str = Field(..., description="Pré-condições do cenário (Dado que...).")
     when: str = Field(..., description="Ações do cenário (Quando...).")

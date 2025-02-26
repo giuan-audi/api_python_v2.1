@@ -7,7 +7,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 def parse_epic_response(response: str, prompt_tokens: int, completion_tokens: int) -> Epic:
     try:
         data = json.loads(response)
@@ -18,75 +17,128 @@ def parse_epic_response(response: str, prompt_tokens: int, completion_tokens: in
             tags=validated_response.tags,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            reflection=validated_response.reflection.model_dump()  # CORRIGIDO
         )
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de Épico: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[Feature]:
     try:
-        features = json.loads(response)
-        validated_features = [FeatureResponse(**feat) for feat in features]
-        return [
-            Feature(
+        features_data = json.loads(response)
+
+        # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
+        if isinstance(features_data, list):
+            # Se for uma lista, processa normalmente
+            validated_features = [FeatureResponse(**feat) for feat in features_data]
+            features = []
+            for feat in validated_features:
+                new_feature = Feature(
+                    parent=parent_id,
+                    title=feat.title,
+                    description=feat.description,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    reflection=feat.reflection  # <-- CORRIGIDO: Atribuir diretamente
+                )
+                features.append(new_feature)
+            return features
+
+        elif isinstance(features_data, dict):
+            # Se for um único objeto, coloca em uma lista
+            validated_feature = FeatureResponse(**features_data)
+            feature = Feature(
                 parent=parent_id,
-                title=validated_feat.title,
-                description=validated_feat.description,
+                title=validated_feature.title,
+                description=validated_feature.description,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-            ) for validated_feat in validated_features
-        ]
+                reflection=validated_feature.reflection  # <-- CORRIGIDO: Atribuir diretamente
+            )
+            return [feature]  # Retorna uma lista com um único elemento
+
+        else:
+            # Se não for nem lista nem dicionário, lança um erro
+            raise ValueError("Formato de resposta inválido para Feature. Esperava uma lista ou um objeto.")
+
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de Feature: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_user_story_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[UserStory]:
     try:
-        user_stories = json.loads(response)
-        validated_user_stories = [UserStoryResponse(**story) for story in user_stories] # <-- CORRIGIDO: Sem ["userStory"]
-        return [
-            UserStory(
+        user_stories_data = json.loads(response)
+
+        # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
+        if isinstance(user_stories_data, list):
+            validated_user_stories = [UserStoryResponse(**story) for story in user_stories_data]
+            return [
+                UserStory(
+                    parent=parent_id,
+                    title=validated_story.title,
+                    description=validated_story.description,
+                    acceptance_criteria=validated_story.acceptance_criteria,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                ) for validated_story in validated_user_stories
+            ]
+        elif isinstance(user_stories_data, dict):
+            validated_user_story = UserStoryResponse(**user_stories_data)
+            return [UserStory(
                 parent=parent_id,
-                title=validated_story.title,
-                description=validated_story.description,
-                acceptance_criteria=validated_story.acceptance_criteria,
+                title=validated_user_story.title,
+                description=validated_user_story.description,
+                acceptance_criteria=validated_user_story.acceptance_criteria,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-            ) for validated_story in validated_user_stories
-        ]
+            )]
+        else:
+            raise ValueError("Formato de resposta inválido para User Story. Esperava uma lista ou um objeto.")
+
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de User Story: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_task_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[Task]:
     try:
-        tasks = json.loads(response)
-        validated_tasks = [TaskResponse(**task) for task in tasks]  # <-- CORRIGIDO: Sem ["task"]
-        return [
-            Task(
+        tasks_data = json.loads(response)
+
+        # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
+        if isinstance(tasks_data, list):
+            validated_tasks = [TaskResponse(**task) for task in tasks_data]
+            return [
+                Task(
+                    parent=parent_id,
+                    title=validated_task.title,
+                    description=validated_task.description,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                ) for validated_task in validated_tasks
+            ]
+        elif isinstance(tasks_data, dict):
+            validated_task = TaskResponse(**tasks_data)
+            return [Task(
                 parent=parent_id,
                 title=validated_task.title,
                 description=validated_task.description,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-            ) for validated_task in validated_tasks
-        ]
+            )]
+        else:
+            raise ValueError("Formato de resposta inválido para Task. Esperava uma lista ou um objeto.")
+
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de Task: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
-
-
+    
 def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[TestCase]:
     try:
-        # A resposta JSON já é um dicionário, NÃO uma lista
-        test_case_data = json.loads(response)  
+        # Agora, esperamos que a resposta seja um único objeto JSON, não uma lista.
+        test_case_data = json.loads(response)
 
         # Validar e criar o TestCase diretamente
         validated_test_case = TestCaseResponse(**test_case_data)
@@ -94,9 +146,10 @@ def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, 
             parent=parent_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            # title vem do Gherkin
         )
 
-        # Criar o Gherkin
+        # Crie o Gherkin (1:1 com TestCase)
         gherkin_data = validated_test_case.gherkin
         gherkin = Gherkin(
             title=gherkin_data.title,  # Usar title
@@ -105,15 +158,16 @@ def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, 
             when=gherkin_data.when,
             then=gherkin_data.then
         )
-        test_case.gherkin = gherkin
+        test_case.gherkin = gherkin  # Associa o Gherkin ao TestCase
 
-        # Criar as Actions
+        # Crie as Actions (1:N com TestCase)
         for action_data in validated_test_case.actions:
+            #validated_action = ActionResponse(**action_data)  # REMOVER: Já validado!
             action = Action(
-                step=action_data.step,
-                expected_result=action_data.expected_result
+                step=action_data.step,         # Usar action_data diretamente
+                expected_result=action_data.expected_result  # Usar action_data diretamente
             )
-            test_case.actions.append(action)
+            test_case.actions.append(action)  # Adiciona a ação à lista
 
         return [test_case]  # Retorna uma lista com UM único TestCase
 
@@ -121,7 +175,6 @@ def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, 
         error_message = f"Erro ao parsear resposta de TestCase: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
-
 
 def parse_bug_response(response: str, issue_id: int, user_story_id: int, prompt_tokens: int, completion_tokens: int) -> List[Bug]:# Não vamos alterar por enquanto
     try:
@@ -144,7 +197,6 @@ def parse_bug_response(response: str, issue_id: int, user_story_id: int, prompt_
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_issue_response(response: str, user_story_id: int, prompt_tokens: int, completion_tokens: int) -> List[Issue]:# Não vamos alterar por enquanto
     try:
         issues = json.loads(response)
@@ -164,7 +216,6 @@ def parse_issue_response(response: str, user_story_id: int, prompt_tokens: int, 
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_pbi_response(response: str, feature_id: int, prompt_tokens: int, completion_tokens: int) -> List[PBI]:# Não vamos alterar por enquanto
     try:
         pbis = json.loads(response)
@@ -177,19 +228,17 @@ def parse_pbi_response(response: str, feature_id: int, prompt_tokens: int, compl
                 tags=validated_pbi.tags,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens
-            ) for _, validated_pbi in zip(pbis, validated_pbis)
+            ) for _, validated_pbis in zip(pbis, validated_pbis)
         ]
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de PBI: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> WBS:
-    '''Função para criar a WBS'''
     try:
         data = json.loads(response)
-        validated_response = WBSResponse(**data)
+        validated_response = WBSResponse(**data)  # Usar WBSResponse
         return WBS(
             parent=parent_id,
             wbs=validated_response.wbs,  # Salva o JSON da WBS diretamente
