@@ -28,8 +28,8 @@ class Status(enum.Enum):
 
 class Epic(Base):
     __tablename__ = "epics"
-    id = Column(Integer, primary_key=True)
-    team_project_id = Column(Integer)  # Correto (Integer)
+    id = Column(Integer, primary_key=True)  # ID interno (INT), autoincremental
+    team_project_id = Column(Integer)  # ID do projeto da equipe (fornecido pelo backend .NET)
     title = Column(String)
     description = Column(Text)
     tags = Column(JSON)
@@ -41,7 +41,7 @@ class Epic(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -49,7 +49,7 @@ class Epic(Base):
 class Feature(Base):
     __tablename__ = "features"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('epics.id'))
+    parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para epic (parent)
     title = Column(String)
     description = Column(Text)
     version = Column(Integer, default=1)
@@ -60,7 +60,7 @@ class Feature(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -68,7 +68,7 @@ class Feature(Base):
 class UserStory(Base):
     __tablename__ = "user_stories"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('features.id'))
+    parent = Column(Integer, ForeignKey('features.id'))  # Chave estrangeira para feature (parent)
     title = Column(String)
     description = Column(Text)
     acceptance_criteria = Column(Text)
@@ -80,7 +80,7 @@ class UserStory(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -88,7 +88,7 @@ class UserStory(Base):
 class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('user_stories.id'))
+    parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para user story (parent)
     title = Column(String)
     description = Column(Text)
     version = Column(Integer, default=1)
@@ -99,7 +99,7 @@ class Task(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -121,10 +121,9 @@ class Bug(Base):  # Não vamos alterar por enquanto
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
-
 
 
 class Issue(Base):# Não vamos alterar por enquanto
@@ -142,7 +141,7 @@ class Issue(Base):# Não vamos alterar por enquanto
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -162,7 +161,7 @@ class PBI(Base):# Não vamos alterar por enquanto
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
 
@@ -180,11 +179,13 @@ class Request(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
-# ---  Tabelas para Test Case (Gherkin e Actions) ---
 class TestCase(Base):
     __tablename__ = "test_cases"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para User Story
+    title = Column(String)  # Adicionado title para o caso de teste
+    gherkin = Column(JSON)  # Agora armazena o Gherkin como JSON
+    script = Column(Text, nullable=True)  # <-- Adicionado: Campo para o script de automação
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -192,29 +193,15 @@ class TestCase(Base):
     feedback = Column(Text, nullable=True)
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
-    summary = Column(Text, nullable=True)          # Adicionado (nullable)
-    reflection = Column(JSON)       # Adicionado (nullable)
-    work_item_id = Column(String, nullable=True)     # Adicionado (nullable)
-    parent_board_id = Column(String, nullable=True)  # Adicionado (nullable)
+    summary = Column(Text, nullable=True)
+    reflection = Column(JSON, nullable=True)
+    work_item_id = Column(String, nullable=True)
+    parent_board_id = Column(String, nullable=True)
 
-    gherkin = relationship("Gherkin", uselist=False, back_populates="test_case")  # Relacionamento 1:1 com Gherkin
     actions = relationship("Action", back_populates="test_case")  # Relacionamento 1:N com Action
 
 
-class Gherkin(Base):
-    __tablename__ = "gherkin"
-    id = Column(Integer, primary_key=True)
-    test_case_id = Column(Integer, ForeignKey('test_cases.id'))  # Chave estrangeira para TestCase
-    title = Column(String)  # Mantido o title no Gherkin
-    scenario = Column(Text)
-    given = Column(Text)
-    when = Column(Text)
-    then = Column(Text)
-    version = Column(Integer, default=1) # Adicionado
-    is_active = Column(Boolean, default=True) # Adicionado
-    test_case = relationship("TestCase", back_populates="gherkin") # Relacionamento com TestCase
-
-
+# A tabela Gherkin foi removida
 class Action(Base):
     __tablename__ = "actions"
     id = Column(Integer, primary_key=True)
@@ -226,7 +213,6 @@ class Action(Base):
     test_case = relationship("TestCase", back_populates="actions") # Relacionamento com TestCase
 
 
-# --- Tabela para WBS ---
 class WBS(Base):
     __tablename__ = "wbs"
     id = Column(Integer, primary_key=True)
@@ -240,25 +226,6 @@ class WBS(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     summary = Column(Text, nullable=True)
-    reflection = Column(JSON)
-    work_item_id = Column(String, nullable=True)
-    parent_board_id = Column(String, nullable=True)
-
-
-# --- Tabela para Automation Script ---
-class AutomationScript(Base):
-    __tablename__ = "automation_scripts"
-    id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('test_cases.id'))  # Chave estrangeira para TestCase
-    script = Column(Text) # Tipo TEXT para armazenar scripts longos
-    version = Column(Integer, default=1)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    feedback = Column(Text, nullable=True)
-    prompt_tokens = Column(Integer, nullable=True)
-    completion_tokens = Column(Integer, nullable=True)
-    summary = Column(Text, nullable=True)
-    reflection = Column(Text, nullable=True)
+    reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
