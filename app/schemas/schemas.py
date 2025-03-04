@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 from typing import Dict, List, Optional, Any
 from enum import Enum
 from datetime import datetime
@@ -11,19 +11,19 @@ class LLMConfig(BaseModel):
     max_tokens: Optional[int] = Field(1000, description="Número máximo de tokens a serem gerados.")
     top_p: Optional[float] = Field(None, description="Top P para amostragem de nucleus (OpenAI).")
 
-    @field_validator('llm')
+    @validator('llm')
     def check_llm_valid(cls, value):
         if value not in ["openai", "gemini"]:
             raise ValueError("LLM deve ser 'openai' ou 'gemini'")
         return value
 
-    @field_validator('temperature')
+    @validator('temperature')
     def check_temperature_range(cls, value):
         if value is not None and (value < 0.0 or value > 1.0):
             raise ValueError("Temperatura deve estar entre 0.0 e 1.0")
         return value
 
-    @field_validator('top_p')
+    @validator('top_p')
     def check_top_p_valid(cls, value):
         if value is not None and (value < 0.0 or value > 1.0):
             raise ValueError("Top P deve estar entre 0.0 e 1.0")
@@ -39,9 +39,8 @@ class TaskTypeEnum(str, Enum):
     ISSUE = "issue"
     PBI = "pbi"
     TEST_CASE = 'test_case'
-    WBS = "wbs"         # Adicionado
-    AUTOMATION_SCRIPT = "automation_script" # Adicionado
-
+    WBS = "wbs"
+    AUTOMATION_SCRIPT = "automation_script"
 
 class PromptData(BaseModel):
     system: str = Field(..., description="Prompt para definir o papel do sistema.")
@@ -73,66 +72,70 @@ class StatusResponse(BaseModel):
     created_at: datetime = Field(..., description="Data de criação da requisição.")
     processed_at: Optional[datetime] = Field(None, description="Data de processamento da requisição (se completada).")
 
+class ReflectionResponse(BaseModel):
+    problem: str = Field(..., description="Descrição do problema que o sistema resolve e seu impacto.")
+    users: str = Field(..., description="Público-alvo do sistema e seus benefícios.")
+    features: List[str] = Field(..., description="Lista de funcionalidades essenciais.")
+    challenges: str = Field(..., description="Principais desafios e estratégias de mitigação.")
 
 class EpicResponse(BaseModel):
     title: str = Field(..., description="Título do Épico.")
     description: str = Field(..., description="Descrição detalhada do Épico.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao Épico.")
     reflection: Dict[str, Any] = Field(..., description="Reflexão sobre o Épico (perguntas e respostas).")
-
+    summary: Optional[str] = Field(None, description="Resumo conciso do Épico.")  # Adicionado (opcional)
 
 class FeatureResponse(BaseModel):
     title: str = Field(..., description="Título da Feature.")
     description: str = Field(..., description="Descrição detalhada da Feature.")
     reflection: Dict[str, Any] = Field(..., description="Reflexão sobre a Feature.")
-
+    summary: Optional[str] = Field(None) # Adicionado,
 
 class UserStoryResponse(BaseModel):
     title: str = Field(..., description="Título da User Story.")
     description: str = Field(..., description="Descrição detalhada da User Story.")
     acceptance_criteria: str = Field(..., description="Critérios de aceite da User Story.")
-
+    summary: Optional[str] = Field(None)
 
 class TaskResponse(BaseModel):
     title: str = Field(..., description="Título da Task.")
     description: str = Field(..., description="Descrição detalhada da Task.")
+    summary: Optional[str] = Field(None) # Adicionado
 
-
+# ---  Schemas para Bug, Issue e PBI  ---
 class BugResponse(BaseModel):# Não vamos alterar por enquanto
     title: str = Field(..., description="Título do Bug.")
     reproSteps: str = Field(..., description="Passos para reprodução do Bug.")
     systemInfo: str = Field(..., description="Informações do sistema onde o Bug ocorre.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao Bug.")
 
-
 class IssueResponse(BaseModel):# Não vamos alterar por enquanto
     title: str = Field(..., description="Título da Issue.")
     description: str = Field(..., description="Descrição detalhada da Issue.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas à Issue.")
-
 
 class PBIResponse(BaseModel):# Não vamos alterar por enquanto
     title: str = Field(..., description="Título do PBI.")
     description: str = Field(..., description="Descrição detalhada do PBI.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao PBI.")
 
+# ---  Schemas para Test Case  ---
+# Removido GherkinResponse, pois agora será um dicionário
 
 class ActionResponse(BaseModel):  # Schema para cada ação dentro de um caso de teste
     step: str = Field(..., description="Passo da ação.")
     expected_result: str = Field(..., description="Resultado esperado da ação.")
 
-
 class TestCaseResponse(BaseModel):  # Schema para a resposta completa de um caso de teste
-    title: str = Field(..., description="Título do caso de teste") # Adicionado title do caso de teste
+    # Removido o id, pois será gerado automaticamente
+    title: str = Field(..., description="Título do caso de teste")  # Adicionado title do caso de teste
     gherkin: Dict[str, Any] = Field(..., description="Dados Gherkin do caso de teste.")  # Agora é um Dict
     actions: List[ActionResponse] = Field(..., description="Lista de ações do caso de teste.")
-
 
 # --- Schema para WBS ---
 class WBSResponse(BaseModel):
     wbs: List[Dict[str, Any]] = Field(..., description="Estrutura da WBS em formato JSON.")
 
-
 # --- Schema para Automation Script ---
-class AutomationScriptResponse(BaseModel):  # Adicionado
+class AutomationScriptResponse(BaseModel):
     script: str = Field(..., description="Script de automação gerado (em formato de comentário).")

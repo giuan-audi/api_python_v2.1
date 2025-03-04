@@ -11,18 +11,24 @@ def parse_epic_response(response: str, prompt_tokens: int, completion_tokens: in
     try:
         data = json.loads(response)
         validated_response = EpicResponse(**data)
-        return Epic(
+        epic = Epic(
             title=validated_response.title,
             description=validated_response.description,
             tags=validated_response.tags,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            reflection=validated_response.reflection  # <-- CORRIGIDO
+            reflection=validated_response.reflection  # JSON object
         )
+        # Adiciona o summary, se existir
+        if hasattr(validated_response, 'summary') and validated_response.summary is not None:
+            epic.summary = validated_response.summary
+        return epic
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de Épico: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
+
+# ... (As funções parse_feature_response, parse_user_story_response e parse_task_response permanecem como na resposta anterior) ...
 
 def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[Feature]:
     try:
@@ -42,6 +48,9 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
                     completion_tokens=completion_tokens,
                     reflection=feat.reflection
                 )
+                #Adiciona o summary
+                if hasattr(feat, 'summary') and feat.summary is not None:
+                    new_feature.summary = feat.summary
                 features.append(new_feature)
             return features
 
@@ -56,6 +65,9 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
                 completion_tokens=completion_tokens,
                 reflection=validated_feature.reflection
             )
+            #Adiciona o summary
+            if hasattr(validated_feature, 'summary') and validated_feature.summary is not None:
+                feature.summary = validated_feature.summary
             return [feature]  # Retorna uma lista com um único elemento
 
         else:
@@ -135,15 +147,15 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-    
 def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[TestCase]:
     try:
-        test_cases_data = json.loads(response)
-        test_cases = []
+        test_cases_data = json.loads(response)  # Carrega o JSON
+
         # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
         if isinstance(test_cases_data, list):
             # Se for uma lista, processa normalmente
-            for test_case_data in test_cases_data:  # <-- ITERA sobre a lista
+            test_cases = []
+            for test_case_data in test_cases_data:
                 validated_test_case = TestCaseResponse(**test_case_data)  # Valida o caso de teste principal
                 # Crie o TestCase
                 test_case = TestCase(
@@ -157,18 +169,17 @@ def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, 
                 # Crie as Actions (1:N com TestCase)
                 for action_data in validated_test_case.actions:
                     action = Action(
-                        step=action_data.step,         # Usar action_data diretamente
-                        expected_result=action_data.expected_result  # Usar action_data diretamente
+                        step=action_data.step,
+                        expected_result=action_data.expected_result
                     )
-                    test_case.actions.append(action)  # Adiciona a ação à lista
+                    test_case.actions.append(action)  # Adiciona a ação à lista de ações do TestCase
 
-                test_cases.append(test_case) # Adiciona o test_case a lista
+                test_cases.append(test_case)  # Adiciona o TestCase à lista
             return test_cases
-        
+
         elif isinstance(test_cases_data, dict):
-            # Se for um único objeto, coloca em uma lista
-            validated_test_case = TestCaseResponse(**test_cases_data)  # Valida o caso de teste principal
-            # Crie o TestCase
+            # Se for um único objeto, cria um TestCase e coloca em uma lista
+            validated_test_case = TestCaseResponse(**test_cases_data)
             test_case = TestCase(
                 parent=parent_id,
                 title=validated_test_case.title,  # Usar o title do JSON
@@ -180,21 +191,21 @@ def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, 
             # Crie as Actions (1:N com TestCase)
             for action_data in validated_test_case.actions:
                 action = Action(
-                    step=action_data.step,         # Usar action_data diretamente
-                    expected_result=action_data.expected_result  # Usar action_data diretamente
+                    step=action_data.step,
+                    expected_result=action_data.expected_result
                 )
                 test_case.actions.append(action)
-            return [test_case]
+
+            return [test_case]  # Retorna uma lista com o único TestCase
 
         else:
-            # Se não for nem lista nem dicionário, lança um erro
             raise ValueError("Formato de resposta inválido para TestCase. Esperava uma lista ou um objeto.")
+
 
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de TestCase: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
-
 
 def parse_bug_response(response: str, issue_id: int, user_story_id: int, prompt_tokens: int, completion_tokens: int) -> List[Bug]:# Não vamos alterar por enquanto
     try:
@@ -236,7 +247,6 @@ def parse_issue_response(response: str, user_story_id: int, prompt_tokens: int, 
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_pbi_response(response: str, feature_id: int, prompt_tokens: int, completion_tokens: int) -> List[PBI]:# Não vamos alterar por enquanto
     try:
         pbis = json.loads(response)
@@ -256,7 +266,6 @@ def parse_pbi_response(response: str, feature_id: int, prompt_tokens: int, compl
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-
 def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> WBS:
     try:
         data = json.loads(response)
@@ -271,4 +280,3 @@ def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, comple
         error_message = f"Erro ao parsear resposta de WBS: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
-    

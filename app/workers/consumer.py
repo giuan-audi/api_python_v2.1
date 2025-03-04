@@ -8,9 +8,9 @@ import logging
 from datetime import datetime
 from app.celery import celery_app
 from sqlalchemy.exc import IntegrityError
+import pika
 import openai
 import google.api_core.exceptions
-import pika
 import requests
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ llm_agent = LLMAgent()
         "retry_jitter": True
     }
 )
-def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None, work_item_id=None, parent_board_id=None):
+def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None, work_item_id=None, parent_board_id=None, type_test=None):
     db = SessionLocal()
     producer = rabbitmq.RabbitMQProducer()  # Instancia o producer
     try:
@@ -74,6 +74,11 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             prompt_data_dict['user'] = prompt_data_dict['user'].replace("{user_input}", prompt_data_dict['user_input'])
             del prompt_data_dict['user_input']
 
+        # Injetar type_test no prompt, se aplicável
+        if type_test:
+            prompt_data_dict['system'] = prompt_data_dict['system'].replace("{type_test}", type_test)
+            prompt_data_dict['user'] = prompt_data_dict['user'].replace("{type_test}", type_test)
+
         # Usar as configurações da LLM recebidas, se fornecidas, ou usar padrões do LLMAgent
         if llm_config:
             llm_agent.chosen_llm = llm_config.get("llm", llm_agent.chosen_llm)
@@ -85,7 +90,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             llm_agent.max_tokens = llm_config.get("max_tokens", llm_agent.max_tokens)
             llm_agent.top_p = llm_config.get("top_p", llm_agent.top_p)
 
-        llm_response = llm_agent.generate_text(prompt_data_dict)
+        llm_response = llm_agent.generate_text(prompt_data_dict, llm_config)  # Passar llm_config
         generated_text = llm_response["text"]
         prompt_tokens = llm_response["prompt_tokens"]
         completion_tokens = llm_response["completion_tokens"]
@@ -174,7 +179,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             # 4. Criar e adicionar os novos itens
             if task_type_enum == TaskType.EPIC:
                 new_epic = parsers.parse_epic_response(generated_text, prompt_tokens, completion_tokens)
-                new_epic.team_project_id = str(db_request.parent)  # Salva o team_project_id (string)
+                new_epic.team_project_id = int(db_request.parent)  # Salva o team_project_id 
                 new_epic.version = new_version
                 new_epic.is_active = True
                 new_epic.work_item_id = work_item_id
