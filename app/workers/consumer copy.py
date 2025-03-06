@@ -90,7 +90,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             llm_agent.max_tokens = llm_config.get("max_tokens", llm_agent.max_tokens)
             llm_agent.top_p = llm_config.get("top_p", llm_agent.top_p)
 
-        llm_response = llm_agent.generate_text(prompt_data_dict, llm_config)
+        llm_response = llm_agent.generate_text(prompt_data_dict, llm_config)  # Passar llm_config
         generated_text = llm_response["text"]
         prompt_tokens = llm_response["prompt_tokens"]
         completion_tokens = llm_response["completion_tokens"]
@@ -139,21 +139,19 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                     # --- Publicar mensagem de notificação no RabbitMQ ---
                     notification_message = {
                         "request_id": request_id_interno,
-                        "parent": db_request.parent,
+                        "parent": db_request.parent,  # Usar parent
                         "task_type": task_type_enum.value,
                         "status": "completed",
                         "error_message": None,
-                        "item_ids": item_id,
-                        "version": test_case.version,
-                        "work_item_id": work_item_id,  # <-- Adicionado
-                        "parent_board_id": parent_board_id  # <-- Adicionado
+                        "item_ids": item_id,  # Usamos o ID do TestCase
+                        "version": test_case.version  # Usamos a versão do TestCase
                     }
                     producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
                     logger.info(f"Mensagem de notificação publicada para request_id: {request_id_interno}")
                     return  # Importante: retornar após o processamento do script
 
                 else:
-                    error_message = f"Nenhum TestCase ativo encontrado para o ID {parent}."
+                    error_message = f"Nenhum TestCase ativo encontrado para o ID {parent}."  # Mensagem de erro mais precisa
                     logger.error(error_message)
                     update_request_status(db, request_id_interno, Status.FAILED, error_message)
                     return
@@ -181,11 +179,11 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
             # 4. Criar e adicionar os novos itens
             if task_type_enum == TaskType.EPIC:
                 new_epic = parsers.parse_epic_response(generated_text, prompt_tokens, completion_tokens)
-                new_epic.team_project_id = int(db_request.parent)  # Salva o team_project_id (inteiro)
+                new_epic.team_project_id = int(db_request.parent)  # Salva o team_project_id 
                 new_epic.version = new_version
                 new_epic.is_active = True
-                new_epic.work_item_id = work_item_id  # <-- Atribuir work_item_id
-                new_epic.parent_board_id = parent_board_id  # <-- Atribuir parent_board_id
+                new_epic.work_item_id = work_item_id
+                new_epic.parent_board_id = parent_board_id
                 db.add(new_epic)
                 db.flush()  # Força o INSERT e a obtenção do ID autoincremental
                 db.refresh(new_epic) # Atualiza o objeto new_epic com os dados do banco (incluindo o ID)
@@ -195,8 +193,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for feature in new_features:
                     feature.version = new_version
                     feature.is_active = True
-                    feature.work_item_id = work_item_id  #<-- Atribuir
-                    feature.parent_board_id = parent_board_id  #<-- Atribuir
+                    feature.work_item_id = work_item_id
+                    feature.parent_board_id = parent_board_id
                 db.add_all(new_features)
                 db.flush()
                 item_id = [f.id for f in new_features]  # Lista de IDs
@@ -205,8 +203,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for us in new_user_stories:
                     us.version = new_version
                     us.is_active = True
-                    us.work_item_id = work_item_id  #<-- Atribuir
-                    us.parent_board_id = parent_board_id  #<-- Atribuir
+                    us.work_item_id = work_item_id
+                    us.parent_board_id = parent_board_id
                 db.add_all(new_user_stories)
                 db.flush()
                 item_id = [us.id for us in new_user_stories]  # Lista de IDs
@@ -215,8 +213,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for task in new_tasks:
                     task.version = new_version
                     task.is_active = True
-                    task.work_item_id = work_item_id  #<-- Atribuir
-                    task.parent_board_id = parent_board_id  #<-- Atribuir
+                    task.work_item_id = work_item_id
+                    task.parent_board_id = parent_board_id
                 db.add_all(new_tasks)
                 db.flush()
                 item_id = [t.id for t in new_tasks]  # Lista de IDs
@@ -225,8 +223,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for bug in new_bugs:
                     bug.version = new_version
                     bug.is_active = True
-                    bug.work_item_id = work_item_id  #<-- Atribuir
-                    bug.parent_board_id = parent_board_id  #<-- Atribuir
+                    bug.work_item_id = work_item_id
+                    bug.parent_board_id = parent_board_id
                 db.add_all(new_bugs)
                 db.flush()
                 item_id = [b.id for b in new_bugs] # Lista de IDs
@@ -235,8 +233,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for issue in new_issues:
                     issue.version = new_version
                     issue.is_active = True
-                    issue.work_item_id = work_item_id  #<-- Atribuir
-                    issue.parent_board_id = parent_board_id  #<-- Atribuir
+                    issue.work_item_id = work_item_id
+                    issue.parent_board_id = parent_board_id
                 db.add_all(new_issues)
                 db.flush()
                 item_id = [i.id for i in new_issues]   # Lista de IDs
@@ -245,8 +243,8 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 for pbi in new_pbis:
                     pbi.version = new_version
                     pbi.is_active = True
-                    pbi.work_item_id = work_item_id  #<-- Atribuir
-                    pbi.parent_board_id = parent_board_id  #<-- Atribuir
+                    pbi.work_item_id = work_item_id
+                    pbi.parent_board_id = parent_board_id
                 db.add_all(new_pbis)
                 db.flush()
                 item_id = [p.id for p in new_pbis]  # Lista de IDs
@@ -291,9 +289,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 "status": "completed",  # Sempre "completed" aqui, erros já foram tratados
                 "error_message": None,  # Sem erros aqui
                 "item_ids": item_id,  # IDs dos itens criados/atualizados (lista)
-                "version": new_version,  # Versão do item
-                "work_item_id": work_item_id,       # <-- Adicionado
-                "parent_board_id": parent_board_id  # <-- Adicionado
+                "version": new_version  # Versão do item
             }
             producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
             logger.info(f"Mensagem de notificação publicada para request_id: {request_id_interno}")
@@ -311,9 +307,7 @@ def process_message_task(request_id_interno, task_type, prompt_data, llm_config=
                 "status": "failed",  # Status de erro
                 "error_message": error_message,  # Mensagem de erro detalhada
                 "item_ids": None,  # Não há item_id em caso de erro
-                "version": None,  # Não há versão em caso de erro
-                "work_item_id": work_item_id,       # <-- Adicionado
-                "parent_board_id": parent_board_id  # <-- Adicionado
+                "version": None  # Não há versão em caso de erro
             }
             producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE) #mesmo em caso de erro, vamos notificar
             logger.info(f"Mensagem de notificação de ERRO publicada para request_id: {request_id_interno}")
