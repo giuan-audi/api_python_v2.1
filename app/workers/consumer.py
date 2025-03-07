@@ -37,7 +37,7 @@ def process_message_task(request_id_interno: str, task_type: str, prompt_data: d
     try:
         logger.info(f"Task Celery 'generate_work_item_task' iniciada para request_id: {request_id_interno}, task_type: {task_type}")
 
-        # Validando task_type usando o Enum
+        # Validação do task_type usando o Enum
         try:
             task_type_enum = TaskType(task_type)
         except ValueError as e:
@@ -108,8 +108,8 @@ def process_message_task(request_id_interno: str, task_type: str, prompt_data: d
                     "error_message": None,
                     "item_ids": item_id,
                     "version": test_case.version,
-                    "work_item_id": work_item_id,  # <-- Adicionado
-                    "parent_board_id": parent_board_id  # <-- Adicionado
+                    "work_item_id": work_item_id,
+                    "parent_board_id": parent_board_id
                 }
                 producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
                 logger.info(f"Mensagem de notificação publicada para request_id: {request_id_interno}")
@@ -138,7 +138,7 @@ def process_message_task(request_id_interno: str, task_type: str, prompt_data: d
         # --- RESTANTE DA LÓGICA (PARA OUTROS TIPOS DE WORK ITEMS) ---
 
         # Processamento do LLM
-        try:
+        try:  # <---  BLOCO TRY EXTERNO (para capturar exceções de LLM, parsing, etc.)
             logger.info(f"Chamando LLMAgent para request_id: {request_id_interno}")
 
             # Ajustar prompt_data
@@ -171,21 +171,25 @@ def process_message_task(request_id_interno: str, task_type: str, prompt_data: d
                 work_item_id, parent_board_id
             )
 
-        except InvalidModelError as e:  #<--- Captura InvalidModelError
+        except InvalidModelError as e:  # <---  CAPTURA InvalidModelError
             handle_invalid_model_error(db, producer, request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
-        
-        except (json.JSONDecodeError, KeyError, ValidationError) as e: #<--- Captura erros de análise
+            return  # <---  IMPORTANTE!  Retorna após tratar o erro.
+
+        except (json.JSONDecodeError, KeyError, ValidationError) as e:  # <---  CAPTURA erros de parsing/validação
             handle_parsing_error(db, producer, request_id_interno, db_request, task_type_enum, e, generated_text, work_item_id, parent_board_id)
-        
-        except IntegrityError as e: #<--- Captura erros de banco
+            return  # <---  IMPORTANTE!  Retorna após tratar o erro.
+
+        except IntegrityError as e:  # <---  CAPTURA erros de integridade do banco
             handle_integrity_error(db, producer, request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
+            return  # <---  IMPORTANTE!  Retorna após tratar o erro.
 
-        except pika.exceptions.AMQPConnectionError as e: #<--- Captura erros de conexão
-            logger.error(f"Erro de conexão com o RabbitMQ: {e}", exc_info=True)
+        except pika.exceptions.AMQPConnectionError as e:  # <---  CAPTURA erros de conexão com o RabbitMQ
+            logger.error(f"Erro de conexão com RabbitMQ: {e}", exc_info=True)
+            return # Não atualiza status, pois não houve conexão
 
-        except Exception as e: #<--- Captura qualquer outro erro
+        except Exception as e:  # <---  CAPTURA qualquer outro erro inesperado
             handle_generic_error(db, producer, request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
-            raise  # Relança para o Celery tratar retentativas
+            raise  # Relança para o Celery tratar retentativas (para erros *recuperáveis*)
 
     finally:
         close_resources(db, producer)
@@ -232,11 +236,13 @@ def process_llm_response(db: Session, task_type: TaskType, generated_text: str, 
     deactivate_existing_items(db, existing_items, task_type)
 
     item_ids = create_new_items(
-        db, task_type, generated_text, parent, prompt_tokens,
-        completion_tokens, new_version, work_item_id, parent_board_id
+        db, task_type, generated_text, parent,
+        prompt_tokens, completion_tokens, new_version, work_item_id, parent_board_id
     )
-    
-    return item_ids, new_version
+    if task_type == TaskType.EPIC:
+        return item_ids, new_version
+    else:
+        return item_ids, new_version
 
 
 def get_existing_items(db: Session, task_type: TaskType, parent: int):
@@ -279,42 +285,38 @@ def create_new_items(db: Session, task_type: TaskType, generated_text: str, pare
                      work_item_id: Optional[int], parent_board_id: Optional[int]) -> List[int]:
     """Cria novos itens com base no tipo de tarefa"""
     parser_map = {
-        TaskType.EPIC: (parsers.parse_epic_response, Epic), # parse_epic_response retorna UM objeto Epic
-        TaskType.FEATURE: (parsers.parse_feature_response, Feature), # parse_feature_response retorna LISTA
-        TaskType.USER_STORY: (parsers.parse_user_story_response, UserStory), # parse_user_story_response retorna LISTA
-        TaskType.TASK: (parsers.parse_task_response, Task), # parse_task_response retorna LISTA
-        TaskType.BUG: (parsers.parse_bug_response, Bug), # parse_bug_response retorna LISTA
-        TaskType.ISSUE: (parsers.parse_issue_response, Issue), # parse_issue_response retorna LISTA
-        TaskType.PBI: (parsers.parse_pbi_response, PBI), # parse_pbi_response retorna LISTA
-        TaskType.TEST_CASE: (parsers.parse_test_case_response, TestCase), # parse_test_case_response retorna LISTA
-        TaskType.WBS: (parsers.parse_wbs_response, WBS), # parse_wbs_response retorna UM objeto WBS
+        TaskType.EPIC: (parsers.parse_epic_response, Epic),
+        TaskType.FEATURE: (parsers.parse_feature_response, Feature),
+        TaskType.USER_STORY: (parsers.parse_user_story_response, UserStory),
+        TaskType.TASK: (parsers.parse_task_response, Task),
+        TaskType.BUG: (parsers.parse_bug_response, Bug),
+        TaskType.ISSUE: (parsers.parse_issue_response, Issue),
+        TaskType.PBI: (parsers.parse_pbi_response, PBI),
+        TaskType.TEST_CASE: (parsers.parse_test_case_response, TestCase),
+        TaskType.WBS: (parsers.parse_wbs_response, WBS),
         # TaskType.AUTOMATION_SCRIPT: ...  <-- REMOVER QUALQUER MENÇÃO AQUI!
     }
 
     parser, model = parser_map[task_type]
-     # CORREÇÃO: Chamar parser() com os argumentos corretos, dependendo do tipo
-    if task_type == TaskType.EPIC:
-        new_items = parser(generated_text, prompt_tokens, completion_tokens)  # Sem parent!
-    elif task_type == TaskType.WBS:
-        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens) # Com parent (já estava correto)
-    else:
-        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens)  # Com parent!
 
     item_ids = []
 
     if task_type == TaskType.EPIC:  # TRATAMENTO ESPECIAL PARA EPIC
-        new_epic = new_items  # parser_epic_response retorna UM objeto Epic, não uma lista
+        new_epic = parser(generated_text, prompt_tokens, completion_tokens)
         new_epic.version = version
         new_epic.is_active = True
-        new_epic.team_project_id = parent  # team_project_id para Epic
+        new_epic.team_project_id = parent  # Usando parent como team_project_id
         new_epic.work_item_id = work_item_id
         new_epic.parent_board_id = parent_board_id
+        
         db.add(new_epic)
-        db.flush()
-        db.refresh(new_epic)
-        item_ids.append(new_epic.id)  # Adiciona ID do Épico à lista
+        db.flush()  # Gera o ID
+        db.refresh(new_epic)  # Atualiza o objeto com o ID do banco
+        
+        item_ids.append(new_epic.id)  # <--- ADICIONA O ID À LISTA
 
-    elif task_type == TaskType.WBS:  # TRATAMENTO ESPECIAL PARA WBS
+    elif task_type == TaskType.WBS: 
+        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens) # <--- CORRETO! (Com parent)
         new_wbs = new_items  # parser_wbs_response retorna UM objeto WBS, não uma lista
         new_wbs.version = version
         new_wbs.is_active = True
@@ -327,6 +329,7 @@ def create_new_items(db: Session, task_type: TaskType, generated_text: str, pare
         item_ids.append(new_wbs.id)  # Adiciona ID do WBS à lista
 
     else:  # TRATAMENTO PARA FEATURE, USER_STORY, TASK, TEST_CASE, BUG, ISSUE, PBI (LISTAS)
+        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens) # <--- CORRETO! (Com parent)
         for item in new_items:
             item.version = version
             item.is_active = True
@@ -340,7 +343,7 @@ def create_new_items(db: Session, task_type: TaskType, generated_text: str, pare
         db.flush()
         item_ids.extend([item.id for item in new_items]) # Adiciona IDs da lista
 
-    return item_ids # Retorna SEMPRE uma lista de IDs, mesmo para Épicos e WBS
+    return item_ids
 
 def handle_invalid_model_error(db: Session, producer: rabbitmq.RabbitMQProducer,
                                request_id: str, db_request: Request,
@@ -441,12 +444,12 @@ def send_notification(producer: rabbitmq.RabbitMQProducer,
         "task_type": task_type,
         "status": status.value,
         "error_message": error_message,
-        "item_ids": item_ids or [],
+        "item_ids": item_ids if item_ids is not None else [],
         "version": version,
         "work_item_id": work_item_id,
         "parent_board_id": parent_board_id
     }
-    
+
     try:
         producer.publish(notification_data, rabbitmq.NOTIFICATION_QUEUE)
         logger.info(f"Notificação enviada para {request_id}")
