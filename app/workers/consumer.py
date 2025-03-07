@@ -1,5 +1,5 @@
 import json
-from app.agents.llm_agent import LLMAgent
+from app.agents.llm_agent import LLMAgent, InvalidModelError
 from app.database import SessionLocal
 from sqlalchemy.orm import Session
 from app.models import Request, Status, TaskType, Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Action, WBS
@@ -12,363 +12,483 @@ import pika
 import openai
 import google.api_core.exceptions
 import requests
+from pydantic import ValidationError
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 llm_agent = LLMAgent()
 
 
 @celery_app.task(
-    name="process_demand_task",
-    autoretry_for=(
-        openai.APITimeoutError,
-        openai.APIConnectionError,
-        openai.RateLimitError,
-        google.api_core.exceptions.ServiceUnavailable,
-        google.api_core.exceptions.ResourceExhausted,
-        requests.exceptions.RequestException,
-    ),
-    retry_kwargs={
+    name="generate_work_item_task",  # Nome mais específico
+    retry_kwargs={  # Configurações de retry (controladas pelo Tenacity)
         "max_retries": 5,
         "retry_backoff": True,
         "retry_backoff_max": 60,
         "retry_jitter": True
-    }
+    },
+    time_limit=600  # Timeout global (10 minutos)
 )
-def process_message_task(request_id_interno, task_type, prompt_data, llm_config=None, work_item_id=None, parent_board_id=None, type_test=None):
+def process_message_task(request_id_interno: str, task_type: str, prompt_data: dict,
+                         llm_config: Optional[dict] = None, work_item_id: Optional[int] = None,
+                         parent_board_id: Optional[int] = None, type_test: Optional[str] = None):
     db = SessionLocal()
     producer = rabbitmq.RabbitMQProducer()  # Instancia o producer
     try:
-        logger.info(f"Task Celery 'process_demand_task' iniciada para request_id: {request_id_interno}, task_type: {task_type}")
+        logger.info(f"Task Celery 'generate_work_item_task' iniciada para request_id: {request_id_interno}, task_type: {task_type}")
 
         # Validando task_type usando o Enum
         try:
             task_type_enum = TaskType(task_type)
-        except ValueError:
-            error_message = f"Task type inválido recebido: {task_type}"
+        except ValueError as e:
+            error_message = f"Task type inválido: {task_type}"
             logger.error(error_message)
             update_request_status(db, request_id_interno, Status.FAILED, error_message)
+            send_notification(producer, request_id_interno, None, task_type, Status.FAILED, error_message) #parent era None
             return
 
         # Buscando a requisição no banco para obter o parent
         db_request = db.query(Request).filter(Request.request_id == request_id_interno).first()
         if not db_request:
-            error_message = f"Requisição com request_id {request_id_interno} não encontrada no banco de dados."
+            error_message = f"Requisição {request_id_interno} não encontrada"
             logger.error(error_message)
+            send_notification(producer, request_id_interno, None, task_type, Status.FAILED, error_message) #parent era None
             return
 
-        parent_str = db_request.parent
+        parent_str = db_request.parent  # parent como string
         try:
             parent = int(parent_str)  # CONVERTER para INT
-        except ValueError:
-            error_message = f"parent inválido (não é um inteiro): {parent_str}"
+        except ValueError as e:
+            error_message = f"Parent inválido: {db_request.parent}"
             logger.error(error_message)
             update_request_status(db, request_id_interno, Status.FAILED, error_message)
+            send_notification(producer, request_id_interno, None, task_type, Status.FAILED, error_message) #parent era None
             return
 
-        # Gerando texto com LLM Agent
-        logger.info(f"Chamando LLMAgent para gerar texto para request_id: {request_id_interno}, task_type: {task_type}")
+        # --- LÓGICA PARA TRATAR O SCRIPT DE AUTOMAÇÃO (JÁ EXISTIA, E ESTAVA CORRETA!) ---
+        if task_type_enum == TaskType.AUTOMATION_SCRIPT:
+            # Buscar o TestCase pelo ID (parent), e NÃO pelo parent da User Story!
+            test_case = db.query(TestCase).filter(TestCase.id == parent, TestCase.is_active == True).first()  # CORRIGIDO
+            if test_case:
+                # Gerando texto com LLM Agent
+                logger.info(f"Chamando LLMAgent para gerar texto para request_id: {request_id_interno}, task_type: {task_type}")
 
-        # Injetar user_input no prompt user
-        prompt_data_dict = prompt_data.copy()
-        if 'user_input' in prompt_data_dict:
-            prompt_data_dict['user'] = prompt_data_dict['user'].replace("{user_input}", prompt_data_dict['user_input'])
-            del prompt_data_dict['user_input']
+                # Injetar user_input no prompt user
+                prompt_data_dict = process_prompt_data(prompt_data, type_test)
 
-        # Injetar type_test no prompt, se aplicável
-        if type_test:
-            prompt_data_dict['system'] = prompt_data_dict['system'].replace("{type_test}", type_test)
-            prompt_data_dict['user'] = prompt_data_dict['user'].replace("{type_test}", type_test)
+                # Configurar LLM
+                if llm_config:
+                    configure_llm_agent(llm_agent, llm_config)
 
-        # Usar as configurações da LLM recebidas, se fornecidas, ou usar padrões do LLMAgent
-        if llm_config:
-            llm_agent.chosen_llm = llm_config.get("llm", llm_agent.chosen_llm)
-            if llm_config.get("llm") == "openai":
-                llm_agent.openai_model = llm_config.get("model", llm_agent.openai_model)
-            elif llm_config.get("llm") == "gemini":
-                llm_agent.gemini_model = llm_config.get("model", llm_agent.gemini_model)
-            llm_agent.temperature = llm_config.get("temperature", llm_agent.temperature)
-            llm_agent.max_tokens = llm_config.get("max_tokens", llm_agent.max_tokens)
-            llm_agent.top_p = llm_config.get("top_p", llm_agent.top_p)
+                # Gerar texto
+                llm_response = llm_agent.generate_text(prompt_data_dict, llm_config)
+                generated_text = llm_response["text"]
+                prompt_tokens = llm_response["prompt_tokens"]
+                completion_tokens = llm_response["completion_tokens"]
 
-        llm_response = llm_agent.generate_text(prompt_data_dict, llm_config)
-        generated_text = llm_response["text"]
-        prompt_tokens = llm_response["prompt_tokens"]
-        completion_tokens = llm_response["completion_tokens"]
+                logger.debug(f"Texto gerado pela LLM para request_id {request_id_interno}: {generated_text}")
+                # Somar os tokens aos valores existentes (se existirem)
+                total_prompt_tokens = (test_case.prompt_tokens or 0) + prompt_tokens
+                total_completion_tokens = (test_case.completion_tokens or 0) + completion_tokens
 
-        logger.debug(f"Texto gerado pela LLM para request_id {request_id_interno}: {generated_text}")
+                test_case.script = generated_text
+                test_case.prompt_tokens = total_prompt_tokens  # Atualiza com a soma
+                test_case.completion_tokens = total_completion_tokens  # Atualiza com a soma
+                db.commit()
+                item_id = [test_case.id]
+                logger.info(f"Script de automação gerado e salvo para TestCase ID: {parent}")
+                update_request_status(db, request_id_interno, Status.COMPLETED)
 
-        # --- LÓGICA DE VERSIONAMENTO E ATIVAÇÃO/DESATIVAÇÃO ---
-        try:
-            logger.info(f"Parsing e salvando resposta para request_id: {request_id_interno}, task_type: {task_type_enum.value}")
+                # --- Publicar mensagem de notificação no RabbitMQ ---
+                notification_message = {
+                    "request_id": request_id_interno,
+                    "parent": db_request.parent,
+                    "task_type": task_type_enum.value,
+                    "status": "completed",
+                    "error_message": None,
+                    "item_ids": item_id,
+                    "version": test_case.version,
+                    "work_item_id": work_item_id,  # <-- Adicionado
+                    "parent_board_id": parent_board_id  # <-- Adicionado
+                }
+                producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
+                logger.info(f"Mensagem de notificação publicada para request_id: {request_id_interno}")
+                return  # Importante: retornar após o processamento do script
 
-            # 1. Obter itens existentes do mesmo tipo e com o mesmo parent/epic_id/feature_id/etc.
-            if task_type_enum == TaskType.EPIC:
-                existing_items = db.query(Epic).filter(Epic.team_project_id == parent, Epic.is_active == True).all()
-            elif task_type_enum == TaskType.FEATURE:
-                existing_items = db.query(Feature).filter(Feature.parent == parent, Feature.is_active == True).all()
-            elif task_type_enum == TaskType.USER_STORY:
-                existing_items = db.query(UserStory).filter(UserStory.parent == parent, UserStory.is_active == True).all()
-            elif task_type_enum == TaskType.TASK:
-                existing_items = db.query(Task).filter(Task.parent == parent, Task.is_active == True).all()
-            elif task_type_enum == TaskType.BUG:
-                existing_items = db.query(Bug).filter(Bug.issue_id == parent, Bug.is_active == True).all()  # Ajuste conforme necessário
-            elif task_type_enum == TaskType.ISSUE:
-                existing_items = db.query(Issue).filter(Issue.user_story_id == parent, Issue.is_active == True).all()  # Ajuste conforme necessário
-            elif task_type_enum == TaskType.PBI:
-                existing_items = db.query(PBI).filter(PBI.feature_id == parent, PBI.is_active == True).all()
-            elif task_type_enum == TaskType.TEST_CASE:
-                existing_items = db.query(TestCase).filter(TestCase.parent == parent, TestCase.is_active == True).all()
-            elif task_type_enum == TaskType.WBS:
-                existing_items = db.query(WBS).filter(WBS.parent == parent, WBS.is_active == True).all()
-            elif task_type_enum == TaskType.AUTOMATION_SCRIPT:
-                # Buscar o TestCase pelo ID (parent), e NÃO pelo parent da User Story!
-                test_case = db.query(TestCase).filter(TestCase.id == parent, TestCase.is_active == True).first()  # CORRIGIDO
-                if test_case:
-                    # Somar os tokens aos valores existentes (se existirem)
-                    total_prompt_tokens = (test_case.prompt_tokens or 0) + prompt_tokens
-                    total_completion_tokens = (test_case.completion_tokens or 0) + completion_tokens
-
-                    test_case.script = generated_text
-                    test_case.prompt_tokens = total_prompt_tokens  # Atualiza com a soma
-                    test_case.completion_tokens = total_completion_tokens  # Atualiza com a soma
-                    db.commit()
-                    item_id = [test_case.id]
-                    logger.info(f"Script de automação gerado e salvo para TestCase ID: {parent}")
-                    update_request_status(db, request_id_interno, Status.COMPLETED)
-
-                    # --- Publicar mensagem de notificação no RabbitMQ ---
-                    notification_message = {
-                        "request_id": request_id_interno,
-                        "parent": db_request.parent,
-                        "task_type": task_type_enum.value,
-                        "status": "completed",
-                        "error_message": None,
-                        "item_ids": item_id,
-                        "version": test_case.version,
-                        "work_item_id": work_item_id,  # <-- Adicionado
-                        "parent_board_id": parent_board_id  # <-- Adicionado
-                    }
-                    producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
-                    logger.info(f"Mensagem de notificação publicada para request_id: {request_id_interno}")
-                    return  # Importante: retornar após o processamento do script
-
-                else:
-                    error_message = f"Nenhum TestCase ativo encontrado para o ID {parent}."
-                    logger.error(error_message)
-                    update_request_status(db, request_id_interno, Status.FAILED, error_message)
-                    return
             else:
-                error_message = f"Task type desconhecido: {task_type_enum.value}"
+                error_message = f"Nenhum TestCase ativo encontrado para o ID {parent}."
                 logger.error(error_message)
                 update_request_status(db, request_id_interno, Status.FAILED, error_message)
+                 # --- Publicar mensagem de notificação no RabbitMQ ---
+                notification_message = {
+                    "request_id": request_id_interno,
+                    "parent": db_request.parent,
+                    "task_type": task_type_enum.value,
+                    "status": "failed",
+                    "error_message": error_message,  # Mensagem específica
+                    "item_ids": None,
+                    "version": None,
+                    "work_item_id": work_item_id,
+                    "parent_board_id": parent_board_id
+                }
+                producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
+                logger.info(f"Mensagem de notificação de ERRO publicada para request_id: {request_id_interno}")
                 return
 
-            # 2. Desativar itens existentes (e seus filhos, no caso de TestCase)
-            for item in existing_items:
-                item.is_active = False
-                item.updated_at = datetime.now()
-                if task_type_enum == TaskType.TEST_CASE:  # Desativar Actions
-                    for action in item.actions:
-                        action.is_active = False
+        # --- RESTANTE DA LÓGICA (PARA OUTROS TIPOS DE WORK ITEMS) ---
 
-            # 3. Determinar a nova versão
-            if existing_items:
-                max_version = max(item.version for item in existing_items)
-                new_version = max_version + 1
-            else:
-                new_version = 1
+        # Processamento do LLM
+        try:
+            logger.info(f"Chamando LLMAgent para request_id: {request_id_interno}")
 
-            # 4. Criar e adicionar os novos itens
-            if task_type_enum == TaskType.EPIC:
-                new_epic = parsers.parse_epic_response(generated_text, prompt_tokens, completion_tokens)
-                new_epic.team_project_id = int(db_request.parent)  # Salva o team_project_id (inteiro)
-                new_epic.version = new_version
-                new_epic.is_active = True
-                new_epic.work_item_id = work_item_id  # <-- Atribuir work_item_id
-                new_epic.parent_board_id = parent_board_id  # <-- Atribuir parent_board_id
-                db.add(new_epic)
-                db.flush()  # Força o INSERT e a obtenção do ID autoincremental
-                db.refresh(new_epic) # Atualiza o objeto new_epic com os dados do banco (incluindo o ID)
-                item_id = [new_epic.id]    # <---  AGORA o ID está disponível!
-            elif task_type_enum == TaskType.FEATURE:
-                new_features = parsers.parse_feature_response(generated_text, parent, prompt_tokens, completion_tokens)
-                for feature in new_features:
-                    feature.version = new_version
-                    feature.is_active = True
-                    feature.work_item_id = work_item_id  #<-- Atribuir
-                    feature.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_features)
-                db.flush()
-                item_id = [f.id for f in new_features]  # Lista de IDs
-            elif task_type_enum == TaskType.USER_STORY:
-                new_user_stories = parsers.parse_user_story_response(generated_text, parent, prompt_tokens, completion_tokens)
-                for us in new_user_stories:
-                    us.version = new_version
-                    us.is_active = True
-                    us.work_item_id = work_item_id  #<-- Atribuir
-                    us.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_user_stories)
-                db.flush()
-                item_id = [us.id for us in new_user_stories]  # Lista de IDs
-            elif task_type_enum == TaskType.TASK:
-                new_tasks = parsers.parse_task_response(generated_text, parent, prompt_tokens, completion_tokens)
-                for task in new_tasks:
-                    task.version = new_version
-                    task.is_active = True
-                    task.work_item_id = work_item_id  #<-- Atribuir
-                    task.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_tasks)
-                db.flush()
-                item_id = [t.id for t in new_tasks]  # Lista de IDs
-            elif task_type_enum == TaskType.BUG:
-                new_bugs = parsers.parse_bug_response(generated_text, parent, parent, prompt_tokens, completion_tokens)  # Corrigido: request_id_client para issue_id e user_story_id
-                for bug in new_bugs:
-                    bug.version = new_version
-                    bug.is_active = True
-                    bug.work_item_id = work_item_id  #<-- Atribuir
-                    bug.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_bugs)
-                db.flush()
-                item_id = [b.id for b in new_bugs] # Lista de IDs
-            elif task_type_enum == TaskType.ISSUE:
-                new_issues = parsers.parse_issue_response(generated_text, parent, prompt_tokens, completion_tokens)
-                for issue in new_issues:
-                    issue.version = new_version
-                    issue.is_active = True
-                    issue.work_item_id = work_item_id  #<-- Atribuir
-                    issue.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_issues)
-                db.flush()
-                item_id = [i.id for i in new_issues]   # Lista de IDs
-            elif task_type_enum == TaskType.PBI:
-                new_pbis = parsers.parse_pbi_response(generated_text, parent, prompt_tokens, completion_tokens)
-                for pbi in new_pbis:
-                    pbi.version = new_version
-                    pbi.is_active = True
-                    pbi.work_item_id = work_item_id  #<-- Atribuir
-                    pbi.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_pbis)
-                db.flush()
-                item_id = [p.id for p in new_pbis]  # Lista de IDs
+            # Ajustar prompt_data
+            prompt_data_dict = process_prompt_data(prompt_data, type_test)
 
-            elif task_type_enum == TaskType.TEST_CASE:
-                new_test_cases = parsers.parse_test_case_response(generated_text, parent, prompt_tokens, completion_tokens)
-                for test_case in new_test_cases:
-                    test_case.version = new_version
-                    test_case.is_active = True
-                    # Definir version e is_active para Actions
-                    for action in test_case.actions:
-                        action.version = new_version
-                        action.is_active = True
-                    test_case.work_item_id = work_item_id  #<-- Atribuir
-                    test_case.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add_all(new_test_cases)  # Salva TestCase, e Actions em cascata
-                db.flush()
-                item_id = [tc.id for tc in new_test_cases]  # Lista de IDs dos test cases
-            elif task_type_enum == TaskType.WBS:
-                new_wbs = parsers.parse_wbs_response(generated_text, parent, prompt_tokens, completion_tokens)
-                new_wbs.version = new_version  # Define a versão
-                new_wbs.is_active = True  # Define como ativo
-                new_wbs.work_item_id = work_item_id  #<-- Atribuir
-                new_wbs.parent_board_id = parent_board_id  #<-- Atribuir
-                db.add(new_wbs) # Adiciona o novo WBS ao banco
-                db.flush()
-                db.refresh(new_wbs)  # Atualiza o objeto para obter o ID gerado
-                item_id = [new_wbs.id]   # Cria uma lista com o ID do novo WBS
+            # Configurar LLM
+            if llm_config:
+                configure_llm_agent(llm_agent, llm_config)
 
+            # Gerar texto
+            llm_response = llm_agent.generate_text(prompt_data_dict, llm_config)
+            generated_text = llm_response["text"]
+            prompt_tokens = llm_response["prompt_tokens"]
+            completion_tokens = llm_response["completion_tokens"]
+
+            logger.debug(f"Texto gerado pela LLM para request_id {request_id_interno}: {generated_text}")
+
+            # Processar resposta e versionamento
+            item_ids, new_version = process_llm_response(
+                db, task_type_enum, generated_text, parent,
+                prompt_tokens, completion_tokens, work_item_id, parent_board_id
+            )
+
+            # Commit final
             db.commit()
-            logger.info(f"Resposta processada e salva no banco de dados para request_id: {request_id_interno}, task_type: {task_type_enum.value}")
             update_request_status(db, request_id_interno, Status.COMPLETED)
+            send_notification(
+                producer, request_id_interno, db_request.parent,
+                task_type_enum.value, Status.COMPLETED, None, item_ids, new_version,
+                work_item_id, parent_board_id
+            )
 
-            # --- Publicar mensagem de notificação no RabbitMQ ---
-            # Adapta para lista, se necessário.
-            if not isinstance(item_id, list):
-                item_id = [item_id]
-            notification_message = {
-                "request_id": request_id_interno,  # ID interno da API Python
-                "parent": db_request.parent,  # ID original do backend .NET (agora 'parent')
-                "task_type": task_type_enum.value,
-                "status": "completed",  # Sempre "completed" aqui, erros já foram tratados
-                "error_message": None,  # Sem erros aqui
-                "item_ids": item_id,  # IDs dos itens criados/atualizados (lista)
-                "version": new_version,  # Versão do item
-                "work_item_id": work_item_id,       # <-- Adicionado
-                "parent_board_id": parent_board_id  # <-- Adicionado
-            }
-            producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE)
-            logger.info(f"Mensagem de notificação publicada para request_id: {request_id_interno}")
+        except InvalidModelError as e:  #<--- Captura InvalidModelError
+            handle_invalid_model_error(db, producer, request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
+        
+        except (json.JSONDecodeError, KeyError, ValidationError) as e: #<--- Captura erros de análise
+            handle_parsing_error(db, producer, request_id_interno, db_request, task_type_enum, e, generated_text, work_item_id, parent_board_id)
+        
+        except IntegrityError as e: #<--- Captura erros de banco
+            handle_integrity_error(db, producer, request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
 
-        except Exception as e_parse:  # Capturar exceções de parsing/banco de dados
-            error_message = f"Erro ao fazer parsing ou salvar resposta para request_id {request_id_interno}: {e_parse}"
-            logger.error(error_message, exc_info=True)
-            db.rollback()
-            update_request_status(db, request_id_interno, Status.FAILED, error_message)
-            # --- Publicar mensagem de notificação de ERRO no RabbitMQ ---
-            notification_message = {
-                "request_id": request_id_interno,
-                "parent": db_request.parent,  # Usar parent
-                "task_type": task_type_enum.value,
-                "status": "failed",  # Status de erro
-                "error_message": error_message,  # Mensagem de erro detalhada
-                "item_ids": None,  # Não há item_id em caso de erro
-                "version": None,  # Não há versão em caso de erro
-                "work_item_id": work_item_id,       # <-- Adicionado
-                "parent_board_id": parent_board_id  # <-- Adicionado
-            }
-            producer.publish(notification_message, rabbitmq.NOTIFICATION_QUEUE) #mesmo em caso de erro, vamos notificar
-            logger.info(f"Mensagem de notificação de ERRO publicada para request_id: {request_id_interno}")
-            return
+        except pika.exceptions.AMQPConnectionError as e: #<--- Captura erros de conexão
+            logger.error(f"Erro de conexão com o RabbitMQ: {e}", exc_info=True)
 
-        except pika.exceptions.AMQPConnectionError as e_conn:
-            error_message = f"Erro de conexão com o RabbitMQ: {e_conn}"
-            logger.error(error_message, exc_info=True)
-            return
-        except pika.exceptions.AMQPChannelError as e_channel:
-            error_message = f"Erro no canal RabbitMQ: {e_channel}"
-            logger.error(error_message, exc_info=True)
-            if request_id_interno:
-                update_request_status(db, request_id_interno, Status.FAILED, error_message)
-            return
-        except pika.exceptions.NackError as e_nack:
-            error_message = f"Erro ao publicar mensagem no RabbitMQ (NACK): {e_nack}"
-            logger.error(error_message, exc_info=True)
-            if request_id_interno:
-                update_request_status(db, request_id_interno, Status.FAILED, error_message)
-            return
-        except json.JSONDecodeError as e_json:
-            error_message = f"Erro ao decodificar JSON da mensagem do RabbitMQ: {e_json}"
-            logger.error(error_message, exc_info=True)
-            if request_id_interno:
-                update_request_status(db, request_id_interno, Status.FAILED, error_message)
-            return
-        except Exception as e_generic:
-            error_message = f"Erro genérico ao processar task Celery: {e_generic}"
-            logger.error(error_message, exc_info=True)
-            if request_id_interno:
-                update_request_status(db, request_id_interno, Status.FAILED, error_message)
-            raise
+        except Exception as e: #<--- Captura qualquer outro erro
+            handle_generic_error(db, producer, request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
+            raise  # Relança para o Celery tratar retentativas
 
     finally:
-        db.close()
-        producer.close() # Garante que a conexão do producer seja fechada
-        logger.debug("Sessão do banco de dados fechada.")
+        close_resources(db, producer)
+        logger.debug("Recursos liberados")
 
 
-def update_request_status(db: Session, request_id: str, status: Status, error_message: str = None):
-    """Função auxiliar para atualizar o status da requisição no banco de dados."""
+def process_prompt_data(prompt_data: dict, type_test: Optional[str]) -> dict:
+    """Processa e ajusta os dados do prompt"""
+    prompt_data_dict = prompt_data.copy()
+    
+    if 'user_input' in prompt_data_dict:
+        prompt_data_dict['user'] = prompt_data_dict['user'].replace(
+            "{user_input}", prompt_data_dict['user_input']
+        )
+        del prompt_data_dict['user_input']
+    
+    if type_test:
+        prompt_data_dict['system'] = prompt_data_dict['system'].replace("{type_test}", type_test)
+        prompt_data_dict['user'] = prompt_data_dict['user'].replace("{type_test}", type_test)
+    
+    return prompt_data_dict
+
+
+def configure_llm_agent(agent: LLMAgent, config: dict):
+    """Configura o LLMAgent com as configurações fornecidas"""
+    agent.chosen_llm = config.get("llm", agent.chosen_llm)
+    
+    if config.get("llm") == "openai":
+        agent.openai_model = config.get("model", agent.openai_model)
+    elif config.get("llm") == "gemini":
+        agent.gemini_model = config.get("model", agent.gemini_model)
+    
+    agent.temperature = config.get("temperature", agent.temperature)
+    agent.max_tokens = config.get("max_tokens", agent.max_tokens)
+    agent.top_p = config.get("top_p", agent.top_p)
+
+
+def process_llm_response(db: Session, task_type: TaskType, generated_text: str, parent: int,
+                         prompt_tokens: int, completion_tokens: int, work_item_id: Optional[int],
+                         parent_board_id: Optional[int]) -> (List[int], int):
+    """Processa a resposta do LLM e gerencia o versionamento"""
+    existing_items = get_existing_items(db, task_type, parent)
+    new_version = get_new_version(existing_items)
+    deactivate_existing_items(db, existing_items, task_type)
+
+    item_ids = create_new_items(
+        db, task_type, generated_text, parent, prompt_tokens,
+        completion_tokens, new_version, work_item_id, parent_board_id
+    )
+    
+    return item_ids, new_version
+
+
+def get_existing_items(db: Session, task_type: TaskType, parent: int):
+    """Obtém itens existentes ativos"""
+    model_map = {
+        TaskType.EPIC: (Epic, Epic.team_project_id),
+        TaskType.FEATURE: (Feature, Feature.parent),
+        TaskType.USER_STORY: (UserStory, UserStory.parent),
+        TaskType.TASK: (Task, Task.parent),
+        TaskType.BUG: (Bug, Bug.issue_id),
+        TaskType.ISSUE: (Issue, Issue.user_story_id),
+        TaskType.PBI: (PBI, PBI.feature_id),
+        TaskType.TEST_CASE: (TestCase, TestCase.parent),
+        TaskType.WBS: (WBS, WBS.parent),
+        # TaskType.AUTOMATION_SCRIPT: (None, None),  <-- REMOVER ESTA LINHA!
+    }
+
+    model, filter_column = model_map[task_type]
+    return db.query(model).filter(filter_column == parent, model.is_active == True).all()
+
+
+
+def get_new_version(existing_items: list) -> int:
+    """Calcula a nova versão com base nos itens existentes"""
+    return max(item.version for item in existing_items) + 1 if existing_items else 1
+
+
+def deactivate_existing_items(db: Session, items: list, task_type: TaskType):
+    """Desativa itens existentes e seus dependentes"""
+    for item in items:
+        item.is_active = False
+        item.updated_at = datetime.now()
+        if task_type == TaskType.TEST_CASE:  # Desativar Actions
+            for action in item.actions:
+                action.is_active = False
+
+
+def create_new_items(db: Session, task_type: TaskType, generated_text: str, parent: int,
+                     prompt_tokens: int, completion_tokens: int, version: int,
+                     work_item_id: Optional[int], parent_board_id: Optional[int]) -> List[int]:
+    """Cria novos itens com base no tipo de tarefa"""
+    parser_map = {
+        TaskType.EPIC: (parsers.parse_epic_response, Epic), # parse_epic_response retorna UM objeto Epic
+        TaskType.FEATURE: (parsers.parse_feature_response, Feature), # parse_feature_response retorna LISTA
+        TaskType.USER_STORY: (parsers.parse_user_story_response, UserStory), # parse_user_story_response retorna LISTA
+        TaskType.TASK: (parsers.parse_task_response, Task), # parse_task_response retorna LISTA
+        TaskType.BUG: (parsers.parse_bug_response, Bug), # parse_bug_response retorna LISTA
+        TaskType.ISSUE: (parsers.parse_issue_response, Issue), # parse_issue_response retorna LISTA
+        TaskType.PBI: (parsers.parse_pbi_response, PBI), # parse_pbi_response retorna LISTA
+        TaskType.TEST_CASE: (parsers.parse_test_case_response, TestCase), # parse_test_case_response retorna LISTA
+        TaskType.WBS: (parsers.parse_wbs_response, WBS), # parse_wbs_response retorna UM objeto WBS
+        # TaskType.AUTOMATION_SCRIPT: ...  <-- REMOVER QUALQUER MENÇÃO AQUI!
+    }
+
+    parser, model = parser_map[task_type]
+     # CORREÇÃO: Chamar parser() com os argumentos corretos, dependendo do tipo
+    if task_type == TaskType.EPIC:
+        new_items = parser(generated_text, prompt_tokens, completion_tokens)  # Sem parent!
+    elif task_type == TaskType.WBS:
+        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens) # Com parent (já estava correto)
+    else:
+        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens)  # Com parent!
+
+    item_ids = []
+
+    if task_type == TaskType.EPIC:  # TRATAMENTO ESPECIAL PARA EPIC
+        new_epic = new_items  # parser_epic_response retorna UM objeto Epic, não uma lista
+        new_epic.version = version
+        new_epic.is_active = True
+        new_epic.team_project_id = parent  # team_project_id para Epic
+        new_epic.work_item_id = work_item_id
+        new_epic.parent_board_id = parent_board_id
+        db.add(new_epic)
+        db.flush()
+        db.refresh(new_epic)
+        item_ids.append(new_epic.id)  # Adiciona ID do Épico à lista
+
+    elif task_type == TaskType.WBS:  # TRATAMENTO ESPECIAL PARA WBS
+        new_wbs = new_items  # parser_wbs_response retorna UM objeto WBS, não uma lista
+        new_wbs.version = version
+        new_wbs.is_active = True
+        new_wbs.parent = parent  # parent_id para WBS (é 'parent', não 'team_project_id'!)
+        new_wbs.work_item_id = work_item_id
+        new_wbs.parent_board_id = parent_board_id
+        db.add(new_wbs)
+        db.flush()
+        db.refresh(new_wbs)
+        item_ids.append(new_wbs.id)  # Adiciona ID do WBS à lista
+
+    else:  # TRATAMENTO PARA FEATURE, USER_STORY, TASK, TEST_CASE, BUG, ISSUE, PBI (LISTAS)
+        for item in new_items:
+            item.version = version
+            item.is_active = True
+            item.work_item_id = work_item_id
+            item.parent_board_id = parent_board_id
+            if task_type == TaskType.TEST_CASE:
+                for action in item.actions:
+                    action.version = version
+                    action.is_active = True
+        db.add_all(new_items)
+        db.flush()
+        item_ids.extend([item.id for item in new_items]) # Adiciona IDs da lista
+
+    return item_ids # Retorna SEMPRE uma lista de IDs, mesmo para Épicos e WBS
+
+def handle_invalid_model_error(db: Session, producer: rabbitmq.RabbitMQProducer,
+                               request_id: str, db_request: Request,
+                               task_type: TaskType, error: InvalidModelError,
+                               work_item_id: Optional[int], parent_board_id: Optional[int]):
+    """Trata erros de modelo inválido"""
+    error_message = f"Erro de modelo LLM: {error}"
+    logger.error(error_message, exc_info=True)
+    
+    # Atualizar banco de dados
+    update_request_status(db, request_id, Status.FAILED, error_message)
+    
+    # Publicar notificação
+    notification_data = {
+        "request_id": request_id,
+        "parent": db_request.parent,
+        "task_type": task_type.value,
+        "status": Status.FAILED.value,
+        "error_message": error_message,
+        "item_ids": None,
+        "version": None,
+        "work_item_id": work_item_id,
+        "parent_board_id": parent_board_id
+    }
+    
+    try:
+        producer.publish(notification_data, rabbitmq.NOTIFICATION_QUEUE)
+        logger.info(f"Notificação de erro publicada para {request_id}")
+    except Exception as e:
+        logger.error(f"Falha ao publicar notificação de erro: {e}", exc_info=True)
+
+
+def handle_parsing_error(db: Session, producer: rabbitmq.RabbitMQProducer,
+                         request_id: str, db_request: Request,
+                         task_type: TaskType, error: Exception,
+                         generated_text: str, work_item_id: Optional[int],
+                         parent_board_id: Optional[int]):
+    """Trata erros de parsing"""
+    error_message = f"Erro de parsing/validação: {error}"
+    logger.error(error_message, exc_info=True)
+    
+    if isinstance(error, ValidationError):
+        logger.error(f"Detalhes da validação: {error.errors()}")
+    
+    logger.debug(f"Resposta problemática: {generated_text}")
+    db.rollback()
+    update_request_status(db, request_id, Status.FAILED, error_message)
+    send_notification(
+        producer, request_id, db_request.parent,
+        task_type.value, Status.FAILED, error_message,
+        None, None, work_item_id, parent_board_id
+    )
+
+
+def handle_integrity_error(db: Session, producer: rabbitmq.RabbitMQProducer,
+                           request_id: str, db_request: Request,
+                           task_type: TaskType, error: IntegrityError,
+                           work_item_id: Optional[int], parent_board_id: Optional[int]):
+    """Trata erros de integridade do banco"""
+    error_message = f"Erro de integridade: {error}"
+    logger.error(error_message, exc_info=True)
+    db.rollback()
+    update_request_status(db, request_id, Status.FAILED, error_message)
+    send_notification(
+        producer, request_id, db_request.parent,
+        task_type.value, Status.FAILED, error_message,
+        None, None, work_item_id, parent_board_id
+    )
+
+
+def handle_generic_error(db: Session, producer: rabbitmq.RabbitMQProducer,
+                         request_id: str, db_request: Request,
+                         task_type: TaskType, error: Exception,
+                         work_item_id: Optional[int], parent_board_id: Optional[int]):
+    """Trata erros genéricos"""
+    error_message = f"Erro inesperado: {error}"
+    logger.error(error_message, exc_info=True)
+    update_request_status(db, request_id, Status.FAILED, error_message)
+    send_notification(
+        producer, request_id, db_request.parent,
+        task_type.value, Status.FAILED, error_message,
+        None, None, work_item_id, parent_board_id
+    )
+
+
+def send_notification(producer: rabbitmq.RabbitMQProducer,
+                      request_id: str, parent: str,
+                      task_type: str, status: Status,
+                      error_message: Optional[str],
+                      item_ids: Optional[List[int]] = None,
+                      version: Optional[int] = None,
+                      work_item_id: Optional[int] = None,
+                      parent_board_id: Optional[int] = None):
+    """Envia notificação para o RabbitMQ"""
+    notification_data = {
+        "request_id": request_id,
+        "parent": parent,
+        "task_type": task_type,
+        "status": status.value,
+        "error_message": error_message,
+        "item_ids": item_ids or [],
+        "version": version,
+        "work_item_id": work_item_id,
+        "parent_board_id": parent_board_id
+    }
+    
+    try:
+        producer.publish(notification_data, rabbitmq.NOTIFICATION_QUEUE)
+        logger.info(f"Notificação enviada para {request_id}")
+    except Exception as e:
+        logger.error(f"Falha ao enviar notificação: {e}", exc_info=True)
+
+
+def update_request_status(db: Session, request_id: str,
+                          status: Status, error_message: str = None):
+    """Atualiza o status da requisição no banco de dados"""
+    logger.info(f"Atualizando status para {request_id} => {status.value}")
+    
     try:
         db_request = db.query(Request).filter(Request.request_id == request_id).first()
         if db_request:
             db_request.status = status.value
-            if status == Status.COMPLETED:
-                db_request.processed_at = datetime.now(tz=db_request.created_at.tzinfo)
-            elif status == Status.FAILED and error_message:
-                db_request.error_message = error_message
             db_request.updated_at = datetime.now()
+            
+            if status == Status.COMPLETED:
+                db_request.processed_at = datetime.now()
+            elif status == Status.FAILED:
+                db_request.error_message = error_message
+            
             db.commit()
-            logger.info(f"Status da requisição {request_id} atualizado para {status.value}.")
+            logger.info(f"Status atualizado para {request_id}")
         else:
-            logger.warning(f"Requisição {request_id} não encontrada para atualizar status.")
+            logger.warning(f"Requisição {request_id} não encontrada para atualização")
     except Exception as e:
-        logger.error(f"Erro ao atualizar status da requisição {request_id} para {status.value}: {e}", exc_info=True)
+        logger.error(f"Erro ao atualizar status: {e}", exc_info=True)
         db.rollback()
+
+
+def close_resources(db: Session, producer: rabbitmq.RabbitMQProducer):
+    """Fecha conexões com recursos externos"""
+    try:
+        db.close()
+        logger.debug("Conexão com banco de dados fechada")
+    except Exception as e:
+        logger.error(f"Erro ao fechar conexão com banco: {e}")
+    
+    try:
+        producer.close()
+        logger.debug("Conexão com RabbitMQ fechada")
+    except Exception as e:
+        logger.error(f"Erro ao fechar conexão com RabbitMQ: {e}")

@@ -3,10 +3,19 @@ from openai import OpenAI
 import os
 import google.generativeai as genai
 import logging
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+import requests
+import openai
+import google.api_core.exceptions
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidModelError(Exception):  # Exceção personalizada
+    """Exceção para modelos de LLM inválidos ou descontinuados."""
+    pass
 
 
 class LLMAgent:
@@ -49,10 +58,22 @@ class LLMAgent:
                 raise
         return self.gemini_client
 
+    @retry(
+        retry=retry_if_exception_type((
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+            openai.RateLimitError,
+            google.api_core.exceptions.ServiceUnavailable,
+            google.api_core.exceptions.ResourceExhausted,
+            requests.exceptions.RequestException
+        )),
+        stop=stop_after_attempt(5),
+        wait=wait_fixed(2),
+        reraise=True
+    )
     def generate_text(self, prompt_data: dict, llm_config: dict = None) -> dict:
-        logger.info(f"Gerando texto com LLM") # Removido a variável, pois pode não ter sido definida
+        logger.info(f"Gerando texto com LLM")
 
-        # Configurações padrão (atributos da classe)
         chosen_llm = self.chosen_llm
         openai_model = self.openai_model
         gemini_model = self.gemini_model
@@ -60,51 +81,46 @@ class LLMAgent:
         max_tokens = self.max_tokens
         top_p = self.top_p
 
-        # Sobrescreve os padrões com os valores de llm_config, SE fornecidos
         if llm_config:
-            chosen_llm = llm_config.get("llm", chosen_llm)  # Usa o valor de llm_config, ou o padrão
+            chosen_llm = llm_config.get("llm", chosen_llm)
             temperature = llm_config.get("temperature", temperature)
             max_tokens = llm_config.get("max_tokens", max_tokens)
             top_p = llm_config.get("top_p", top_p)
-            # Tratar model separadamente, pois depende do LLM
             if chosen_llm == "openai":
                 model = llm_config.get("model")
                 if model is not None:
                     openai_model = model
-                # else: não precisa, pois já foi inicializado
-
             elif chosen_llm == "gemini":
                 model = llm_config.get("model")
                 if model is not None:
                     gemini_model = model
-                #else: não precisa, pois já foi inicializado
             else:
                 error_message = f"LLM desconhecida: {self.chosen_llm}"
                 logger.error(error_message)
                 raise ValueError(error_message)
-        #Agora vamos ter certeza que o model está vindo, se não, define com o padrão.
+
         if chosen_llm == 'openai':
             if openai_model is None:
-                openai_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-0125") #Ou outro modelo como padrão
+                openai_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-0125")
             model_to_use = openai_model
         else:
             if gemini_model is None:
-                gemini_model = os.getenv("GEMINI_MODEL", "gemini-pro") #Ou outro modelo como padrão
+                gemini_model = os.getenv("GEMINI_MODEL", "gemini-pro")
             model_to_use = gemini_model
 
         try:
             if chosen_llm == "openai":
                 client = self.get_openai_client()
                 response = client.chat.completions.create(
-                    model=model_to_use,  # Usa a variável local
+                    model=model_to_use,
                     messages=[
                         {"role": "system", "content": prompt_data.get("system", "")},
                         {"role": "user", "content": prompt_data.get("user", "")},
                         {"role": "assistant", "content": prompt_data.get("assistant", "")}
                     ],
-                    temperature=temperature,  # Usa a variável local
-                    max_tokens=max_tokens,  # Usa a variável local
-                    top_p=top_p  # Usa a variável local
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p
                 )
                 logger.debug(f"Resposta da OpenAI: {response.choices[0].message.content}")
 
@@ -120,17 +136,14 @@ class LLMAgent:
             elif chosen_llm == "gemini":
                 client = self.get_gemini_client()
 
-                # --- Contagem de Tokens (Gemini) - ANTES da requisição ---
                 request = f"""
                 system: {prompt_data.get("system", "")}
                 user: {prompt_data.get("user", "")}
                 assistant: {prompt_data.get("assistant", "")}
                 """
 
-                # Contagem ANTES da chamada
                 token_count = client.count_tokens(request)
                 prompt_tokens = token_count.total_tokens
-
 
                 safety_settings = [
                     {
@@ -153,8 +166,8 @@ class LLMAgent:
 
                 generation_config = genai.types.GenerationConfig(
                     candidate_count=1,
-                    max_output_tokens=max_tokens,  # Usa a variável local
-                    temperature=temperature  # Usa a variável local
+                    max_output_tokens=max_tokens,
+                    temperature=temperature
                 )
 
                 response = client.generate_content(
@@ -164,7 +177,6 @@ class LLMAgent:
                 )
 
                 completion_tokens = client.count_tokens(response.text).total_tokens
-
 
                 logger.debug(f"Resposta do Gemini: {response.text}")
                 return {
@@ -177,6 +189,16 @@ class LLMAgent:
                 logger.error(error_message)
                 raise ValueError(error_message)
 
-        except Exception as e:
+        except openai.NotFoundError as e:  # Captura erro específico da OpenAI
+            error_message = f"Modelo OpenAI inválido/descontinuado: {model_to_use}. Erro: {e}"
+            logger.error(error_message, exc_info=True)
+            raise InvalidModelError(error_message) from e  # Lança exceção personalizada
+
+        except google.api_core.exceptions.NotFound as e:  # Captura erro específico do Gemini (se for NotFound)
+            error_message = f"Modelo Gemini inválido/descontinuado: {model_to_use}. Erro: {e}"
+            logger.error(error_message, exc_info=True)
+            raise InvalidModelError(error_message) from e
+
+        except Exception as e: #Exceções genericas
             logger.error(f"Erro ao gerar texto com LLM {chosen_llm}: {e}", exc_info=True)
             raise
