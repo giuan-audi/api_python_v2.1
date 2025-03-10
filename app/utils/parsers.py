@@ -46,7 +46,7 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
                     description=feat.description,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    reflection=feat.reflection
+                    # reflection=feat.reflection
                 )
                 #Adiciona o summary
                 if hasattr(feat, 'summary') and feat.summary is not None:
@@ -63,7 +63,7 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
                 description=validated_feature.description,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                reflection=validated_feature.reflection
+                # reflection=validated_feature.reflection
             )
             #Adiciona o summary
             if hasattr(validated_feature, 'summary') and validated_feature.summary is not None:

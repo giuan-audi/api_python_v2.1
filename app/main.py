@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.routers import generation
-from app.database import create_tables
+# from app.database import create_tables
 
 app = FastAPI(
     title="AI Demand Management API",
@@ -13,10 +13,10 @@ app = FastAPI(
 )
 
 
-# Cria as tabelas ao iniciar
-@app.on_event("startup")
-def startup_event():
-    create_tables()
+# # Cria as tabelas ao iniciar
+# @app.on_event("startup")
+# def startup_event():
+#     create_tables()
 
 
 app.include_router(generation.router, prefix="/generation", tags=["generation"])

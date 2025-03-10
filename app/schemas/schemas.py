@@ -88,7 +88,7 @@ class EpicResponse(BaseModel):
 class FeatureResponse(BaseModel):
     title: str = Field(..., description="Título da Feature.")
     description: str = Field(..., description="Descrição detalhada da Feature.")
-    reflection: Dict[str, Any] = Field(..., description="Reflexão sobre a Feature.")
+    # reflection: Dict[str, Any] = Field(..., description="Reflexão sobre a Feature.")
     summary: Optional[str] = Field(None) # Adicionado,
 
 class UserStoryResponse(BaseModel):
