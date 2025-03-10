@@ -6,7 +6,6 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copia TUDO (incluindo app/, pyproject.toml, etc)
 COPY . .
 
 RUN pip install --upgrade pip && \
@@ -16,4 +15,4 @@ RUN pip install --upgrade pip && \
 
 EXPOSE 8000
 
-CMD ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000"]
+CMD ["gunicorn", "app.main:create_app()", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000"]
