@@ -122,7 +122,8 @@ class LLMAgent:
                     max_tokens=max_tokens,
                     top_p=top_p
                 )
-                logger.debug(f"Resposta da OpenAI: {response.choices[0].message.content}")
+                # teste de log.
+                logger.info(f"Resposta da OpenAI: {response.choices[0].message.content}")
 
                 prompt_tokens = response.usage.prompt_tokens
                 completion_tokens = response.usage.completion_tokens

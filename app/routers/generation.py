@@ -37,7 +37,8 @@ async def generate(request: RequestSchema, db: Session = Depends(get_db)):
             "prompt_data": request.prompt_data.model_dump(),  # Passar os dados do prompt
             "llm_config": llm_config.model_dump(),  # Passar as configurações da LLM (opcional)
             "work_item_id": request.work_item_id,  # <-- Passando para a task
-            "parent_board_id": request.parent_board_id
+            "parent_board_id": request.parent_board_id,
+            "type_test": request.type_test
         }
 
         # Enviar a task para o Celery

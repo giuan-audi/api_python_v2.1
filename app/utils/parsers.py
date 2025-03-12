@@ -28,7 +28,6 @@ def parse_epic_response(response: str, prompt_tokens: int, completion_tokens: in
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
-# ... (As funções parse_feature_response, parse_user_story_response e parse_task_response permanecem como na resposta anterior) ...
 
 def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[Feature]:
     try:
@@ -92,6 +91,7 @@ def parse_user_story_response(response: str, parent_id: int, prompt_tokens: int,
                     title=validated_story.title,
                     description=validated_story.description,
                     acceptance_criteria=validated_story.acceptance_criteria,
+                    priority=validated_story.priority,  # <-- Adicionado
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 ) for validated_story in validated_user_stories
@@ -103,6 +103,7 @@ def parse_user_story_response(response: str, parent_id: int, prompt_tokens: int,
                 title=validated_user_story.title,
                 description=validated_user_story.description,
                 acceptance_criteria=validated_user_story.acceptance_criteria,
+                priority=validated_user_story.priority,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )]
@@ -118,7 +119,6 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
     try:
         tasks_data = json.loads(response)
 
-        # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
         if isinstance(tasks_data, list):
             validated_tasks = [TaskResponse(**task) for task in tasks_data]
             return [
@@ -126,6 +126,7 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
                     parent=parent_id,
                     title=validated_task.title,
                     description=validated_task.description,
+                    estimate=validated_task.estimate,  # <-- Adicionado
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 ) for validated_task in validated_tasks
@@ -136,6 +137,7 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
                 parent=parent_id,
                 title=validated_task.title,
                 description=validated_task.description,
+                estimate=validated_task.estimate,  # <-- Adicionado
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )]
@@ -149,46 +151,41 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
 
 def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[TestCase]:
     try:
-        test_cases_data = json.loads(response)  # Carrega o JSON
+        test_cases_data = json.loads(response)
 
-        # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
         if isinstance(test_cases_data, list):
-            # Se for uma lista, processa normalmente
             test_cases = []
             for test_case_data in test_cases_data:
-                validated_test_case = TestCaseResponse(**test_case_data)  # Valida o caso de teste principal
-                # Crie o TestCase
+                validated_test_case = TestCaseResponse(**test_case_data)
                 test_case = TestCase(
                     parent=parent_id,
-                    title=validated_test_case.title,  # Usar o title do JSON
+                    title=validated_test_case.title,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
-                    gherkin=json.dumps(validated_test_case.gherkin)  # Serializa o Gherkin para JSON
+                    gherkin=json.dumps(validated_test_case.gherkin),
+                    priority=validated_test_case.priority,  # <-- Adicionado
                 )
-
-                # Crie as Actions (1:N com TestCase)
                 for action_data in validated_test_case.actions:
                     action = Action(
                         step=action_data.step,
                         expected_result=action_data.expected_result
                     )
-                    test_case.actions.append(action)  # Adiciona a ação à lista de ações do TestCase
+                    test_case.actions.append(action)
 
-                test_cases.append(test_case)  # Adiciona o TestCase à lista
+                test_cases.append(test_case)
             return test_cases
 
         elif isinstance(test_cases_data, dict):
-            # Se for um único objeto, cria um TestCase e coloca em uma lista
             validated_test_case = TestCaseResponse(**test_cases_data)
             test_case = TestCase(
                 parent=parent_id,
-                title=validated_test_case.title,  # Usar o title do JSON
+                title=validated_test_case.title,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                gherkin=json.dumps(validated_test_case.gherkin)  # Serializa o Gherkin para JSON
+                gherkin=json.dumps(validated_test_case.gherkin),
+                priority=validated_test_case.priority,  # <-- Adicionado
             )
 
-            # Crie as Actions (1:N com TestCase)
             for action_data in validated_test_case.actions:
                 action = Action(
                     step=action_data.step,
@@ -196,16 +193,16 @@ def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, 
                 )
                 test_case.actions.append(action)
 
-            return [test_case]  # Retorna uma lista com o único TestCase
+            return [test_case]
 
         else:
             raise ValueError("Formato de resposta inválido para TestCase. Esperava uma lista ou um objeto.")
-
 
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de TestCase: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
+
 
 def parse_bug_response(response: str, issue_id: int, user_story_id: int, prompt_tokens: int, completion_tokens: int) -> List[Bug]:# Não vamos alterar por enquanto
     try:

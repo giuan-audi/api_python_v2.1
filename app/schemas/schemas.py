@@ -83,24 +83,28 @@ class EpicResponse(BaseModel):
     description: str = Field(..., description="Descrição detalhada do Épico.")
     tags: List[str] = Field(default_factory=list, description="Lista de tags associadas ao Épico.")
     reflection: Dict[str, Any] = Field(..., description="Reflexão sobre o Épico (perguntas e respostas).")
-    summary: Optional[str] = Field(None, description="Resumo conciso do Épico.")  # Adicionado (opcional)
+    summary: Optional[str] = Field(None, description="Resumo conciso do Épico.")
 
 class FeatureResponse(BaseModel):
     title: str = Field(..., description="Título da Feature.")
     description: str = Field(..., description="Descrição detalhada da Feature.")
     # reflection: Dict[str, Any] = Field(..., description="Reflexão sobre a Feature.")
-    summary: Optional[str] = Field(None) # Adicionado,
+    summary: Optional[str] = Field(None)
 
 class UserStoryResponse(BaseModel):
     title: str = Field(..., description="Título da User Story.")
     description: str = Field(..., description="Descrição detalhada da User Story.")
     acceptance_criteria: str = Field(..., description="Critérios de aceite da User Story.")
+    priority: str = Field(..., description="Prioridade da User Story.")
+    dod: Optional[str] = Field(None, description="Definition of Done (DoD)")
+    dor: Optional[str] = Field(None, description="Definition of Ready (DoR)")
     summary: Optional[str] = Field(None)
 
 class TaskResponse(BaseModel):
     title: str = Field(..., description="Título da Task.")
     description: str = Field(..., description="Descrição detalhada da Task.")
-    summary: Optional[str] = Field(None) # Adicionado
+    summary: Optional[str] = Field(None)
+    estimate: str = Field(..., description="Estimativa de tempo da Task.")
 
 # ---  Schemas para Bug, Issue e PBI  ---
 class BugResponse(BaseModel):# Não vamos alterar por enquanto
@@ -127,9 +131,9 @@ class ActionResponse(BaseModel):  # Schema para cada ação dentro de um caso de
     expected_result: str = Field(..., description="Resultado esperado da ação.")
 
 class TestCaseResponse(BaseModel):  # Schema para a resposta completa de um caso de teste
-    # Removido o id, pois será gerado automaticamente
-    title: str = Field(..., description="Título do caso de teste")  # Adicionado title do caso de teste
-    gherkin: Dict[str, Any] = Field(..., description="Dados Gherkin do caso de teste.")  # Agora é um Dict
+    priority: str = Field(..., description="Prioridade do caso de teste.")
+    title: str = Field(..., description="Título do caso de teste")
+    gherkin: Dict[str, Any] = Field(..., description="Dados Gherkin do caso de teste.")
     actions: List[ActionResponse] = Field(..., description="Lista de ações do caso de teste.")
 
 # --- Schema para WBS ---

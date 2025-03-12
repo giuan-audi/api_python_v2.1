@@ -68,10 +68,13 @@ class Feature(Base):
 class UserStory(Base):
     __tablename__ = "user_stories"
     id = Column(Integer, primary_key=True)
-    parent = Column(Integer, ForeignKey('features.id'))  # Chave estrangeira para feature (parent)
+    parent = Column(Integer, ForeignKey('features.id'))
     title = Column(String)
     description = Column(Text)
     acceptance_criteria = Column(Text)
+    priority = Column(String)
+    dod = Column(Text, nullable=True)
+    dor = Column(Text, nullable=True)
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -91,6 +94,7 @@ class Task(Base):
     parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para user story (parent)
     title = Column(String)
     description = Column(Text)
+    estimate = Column(String)
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -197,6 +201,7 @@ class TestCase(Base):
     reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
+    priority = Column(String)
 
     actions = relationship("Action", back_populates="test_case")  # Relacionamento 1:N com Action
 

@@ -65,10 +65,10 @@ def process_message_task(request_id_interno: str, task_type: str, prompt_data: d
             send_notification(producer, request_id_interno, None, task_type, Status.FAILED, error_message) #parent era None
             return
 
-        # --- LÓGICA PARA TRATAR O SCRIPT DE AUTOMAÇÃO (JÁ EXISTIA, E ESTAVA CORRETA!) ---
+        # --- LÓGICA PARA TRATAR O SCRIPT DE AUTOMAÇÃO
         if task_type_enum == TaskType.AUTOMATION_SCRIPT:
             # Buscar o TestCase pelo ID (parent), e NÃO pelo parent da User Story!
-            test_case = db.query(TestCase).filter(TestCase.id == parent, TestCase.is_active == True).first()  # CORRIGIDO
+            test_case = db.query(TestCase).filter(TestCase.id == parent, TestCase.is_active == True).first()
             if test_case:
                 # Gerando texto com LLM Agent
                 logger.info(f"Chamando LLMAgent para gerar texto para request_id: {request_id_interno}, task_type: {task_type}")
@@ -205,11 +205,13 @@ def process_prompt_data(prompt_data: dict, type_test: Optional[str]) -> dict:
             "{user_input}", prompt_data_dict['user_input']
         )
         del prompt_data_dict['user_input']
-    
-    if type_test:
-        prompt_data_dict['system'] = prompt_data_dict['system'].replace("{type_test}", type_test)
-        prompt_data_dict['user'] = prompt_data_dict['user'].replace("{type_test}", type_test)
-    
+
+    replacement = type_test if type_test is not None else ''
+
+    for key in ['system', 'user', 'assistant']:
+        if key in prompt_data_dict:
+            prompt_data_dict[key] = prompt_data_dict[key].replace("{type_test}", replacement)
+
     return prompt_data_dict
 
 
@@ -257,12 +259,13 @@ def get_existing_items(db: Session, task_type: TaskType, parent: int):
         TaskType.PBI: (PBI, PBI.feature_id),
         TaskType.TEST_CASE: (TestCase, TestCase.parent),
         TaskType.WBS: (WBS, WBS.parent),
-        # TaskType.AUTOMATION_SCRIPT: (None, None),  <-- REMOVER ESTA LINHA!
+        # TaskType.AUTOMATION_SCRIPT: (None, None),
     }
 
     model, filter_column = model_map[task_type]
+    if model is None:
+        return []
     return db.query(model).filter(filter_column == parent, model.is_active == True).all()
-
 
 
 def get_new_version(existing_items: list) -> int:
@@ -298,22 +301,22 @@ def create_new_items(db: Session, task_type: TaskType, generated_text: str, pare
     }
 
     parser, model = parser_map[task_type]
+    # new_items = parser(generated_text, parent, prompt_tokens, completion_tokens)
 
     item_ids = []
 
     if task_type == TaskType.EPIC:  # TRATAMENTO ESPECIAL PARA EPIC
-        new_epic = parser(generated_text, prompt_tokens, completion_tokens)
+        new_items = parser(generated_text, prompt_tokens, completion_tokens)  # <---  CORRETO! (Sem parent)
+        new_epic = new_items  # parser_epic_response retorna UM objeto Epic, não uma lista
         new_epic.version = version
         new_epic.is_active = True
-        new_epic.team_project_id = parent  # Usando parent como team_project_id
+        new_epic.team_project_id = parent  # team_project_id para Epic
         new_epic.work_item_id = work_item_id
         new_epic.parent_board_id = parent_board_id
-        
         db.add(new_epic)
-        db.flush()  # Gera o ID
-        db.refresh(new_epic)  # Atualiza o objeto com o ID do banco
-        
-        item_ids.append(new_epic.id)  # <--- ADICIONA O ID À LISTA
+        db.flush()
+        db.refresh(new_epic)
+        item_ids.append(new_epic.id)
 
     elif task_type == TaskType.WBS: 
         new_items = parser(generated_text, parent, prompt_tokens, completion_tokens) # <--- CORRETO! (Com parent)
@@ -329,7 +332,7 @@ def create_new_items(db: Session, task_type: TaskType, generated_text: str, pare
         item_ids.append(new_wbs.id)  # Adiciona ID do WBS à lista
 
     else:  # TRATAMENTO PARA FEATURE, USER_STORY, TASK, TEST_CASE, BUG, ISSUE, PBI (LISTAS)
-        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens) # <--- CORRETO! (Com parent)
+        new_items = parser(generated_text, parent, prompt_tokens, completion_tokens)
         for item in new_items:
             item.version = version
             item.is_active = True
