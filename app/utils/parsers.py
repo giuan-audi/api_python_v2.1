@@ -4,6 +4,7 @@ from app.models import Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase
 from app.schemas.schemas import EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse, BugResponse, IssueResponse, PBIResponse, TestCaseResponse, ActionResponse, WBSResponse, AutomationScriptResponse
 from pydantic import ValidationError
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,22 @@ def parse_epic_response(response: str, prompt_tokens: int, completion_tokens: in
         return epic
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de Épico: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        raise ValueError(error_message)
+
+
+def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> WBS:
+    try:
+        data = json.loads(response)
+        validated_response = WBSResponse(**data)  # Usar WBSResponse
+        return WBS(
+            parent=parent_id,
+            wbs=validated_response.wbs,  # Salva o JSON da WBS diretamente
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens
+        )
+    except (json.JSONDecodeError, KeyError, ValidationError) as e:
+        error_message = f"Erro ao parsear resposta de WBS: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
@@ -149,57 +166,71 @@ def parse_task_response(response: str, parent_id: int, prompt_tokens: int, compl
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
+# parsers.py (Exemplo para TestCase)
 def parse_test_case_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[TestCase]:
     try:
         test_cases_data = json.loads(response)
+        test_cases = []
 
+        # Trata lista ou objeto único
         if isinstance(test_cases_data, list):
-            test_cases = []
             for test_case_data in test_cases_data:
                 validated_test_case = TestCaseResponse(**test_case_data)
                 test_case = TestCase(
                     parent=parent_id,
                     title=validated_test_case.title,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
                     gherkin=json.dumps(validated_test_case.gherkin),
-                    priority=validated_test_case.priority,  # <-- Adicionado
+                    priority=validated_test_case.priority,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens
                 )
                 for action_data in validated_test_case.actions:
-                    action = Action(
-                        step=action_data.step,
-                        expected_result=action_data.expected_result
-                    )
+                    action = Action(step=action_data.step, expected_result=action_data.expected_result)
                     test_case.actions.append(action)
-
                 test_cases.append(test_case)
-            return test_cases
-
         elif isinstance(test_cases_data, dict):
             validated_test_case = TestCaseResponse(**test_cases_data)
             test_case = TestCase(
                 parent=parent_id,
                 title=validated_test_case.title,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
                 gherkin=json.dumps(validated_test_case.gherkin),
-                priority=validated_test_case.priority,  # <-- Adicionado
+                priority=validated_test_case.priority,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens
             )
-
             for action_data in validated_test_case.actions:
-                action = Action(
-                    step=action_data.step,
-                    expected_result=action_data.expected_result
-                )
+                action = Action(step=action_data.step, expected_result=action_data.expected_result)
                 test_case.actions.append(action)
-
-            return [test_case]
-
+            test_cases.append(test_case)
         else:
-            raise ValueError("Formato de resposta inválido para TestCase. Esperava uma lista ou um objeto.")
+            raise ValueError("Formato inválido para TestCase.")
+        
+        return test_cases
+    except (json.JSONDecodeError, ValidationError) as e:
+        logger.error(f"Erro ao parsear TestCase: {str(e)}", exc_info=True)
+        raise ValueError(f"Erro ao parsear TestCase: {str(e)}")
+    
 
-    except (json.JSONDecodeError, KeyError, ValidationError) as e:
-        error_message = f"Erro ao parsear resposta de TestCase: {str(e)}"
+def parse_automation_script_response(generated_text: str, prompt_tokens: int, completion_tokens: int) -> str:
+    """
+    Extrai o script de automação do texto gerado pela LLM, validando o formato.
+    Retorna apenas o script limpo (sem o comentário de bloco).
+    """
+    try:
+        # Valida se o texto está dentro de um bloco /* */
+        if not re.match(r'^/\*.*\*/$', generated_text, re.DOTALL):
+            raise ValueError("Script deve estar dentro de um comentário de bloco /* */")
+
+        # Remove os delimitadores de comentário
+        clean_script = re.sub(r'^/\*|\*/$', '', generated_text, flags=re.DOTALL).strip()
+        
+        # Validação adicional via Pydantic (opcional, mas recomendado)
+        AutomationScriptResponse(script=clean_script)
+        
+        return clean_script
+
+    except (ValueError, ValidationError) as e:
+        error_message = f"Erro ao validar script de automação: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)
 
@@ -260,20 +291,5 @@ def parse_pbi_response(response: str, feature_id: int, prompt_tokens: int, compl
         ]
     except (json.JSONDecodeError, KeyError, ValidationError) as e:
         error_message = f"Erro ao parsear resposta de PBI: {str(e)}"
-        logger.error(error_message, exc_info=True)
-        raise ValueError(error_message)
-
-def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> WBS:
-    try:
-        data = json.loads(response)
-        validated_response = WBSResponse(**data)  # Usar WBSResponse
-        return WBS(
-            parent=parent_id,
-            wbs=validated_response.wbs,  # Salva o JSON da WBS diretamente
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens
-        )
-    except (json.JSONDecodeError, KeyError, ValidationError) as e:
-        error_message = f"Erro ao parsear resposta de WBS: {str(e)}"
         logger.error(error_message, exc_info=True)
         raise ValueError(error_message)

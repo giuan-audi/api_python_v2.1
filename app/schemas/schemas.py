@@ -59,6 +59,12 @@ class Request(BaseModel):
     type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress") # Adicionado
 
 
+class ReprocessRequest(BaseModel):
+    prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
+    llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
+    type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress")
+
+
 class Response(BaseModel):
     request_id: str = Field(..., description="ID da requisição da API (interno).")
     response: Dict = Field(..., description="Resposta da API (ex: {'status': 'queued'}).")
@@ -66,11 +72,13 @@ class Response(BaseModel):
 
 class StatusResponse(BaseModel):
     request_id: str = Field(..., description="ID da requisição da API (interno).")
-    parent: int = Field(..., description="ID do item pai.")  # Renomeado e confirmado como int
+    parent: int = Field(..., description="ID do item pai.")
     task_type: str = Field(..., description="Tipo da tarefa.")
     status: str = Field(..., description="Status da requisição (pending, completed, failed).")
     created_at: datetime = Field(..., description="Data de criação da requisição.")
     processed_at: Optional[datetime] = Field(None, description="Data de processamento da requisição (se completada).")
+    artifact_type: str = Field(..., description="Tipo de artefato")
+    artifact_id: int = Field(..., description="ID do artefato")
 
 class ReflectionResponse(BaseModel):
     problem: str = Field(..., description="Descrição do problema que o sistema resolve e seu impacto.")

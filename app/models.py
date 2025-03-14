@@ -174,13 +174,15 @@ class Request(Base):
     __tablename__ = "requests"
     id = Column(Integer, primary_key=True)
     request_id = Column(String, unique=True)
-    parent = Column(Integer)  # Renomeado e agora é Integer
+    parent = Column(Integer)
     task_type = Column(String)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     processed_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    artifact_type = Column(String)
+    artifact_id = Column(Integer)
 
 
 class TestCase(Base):
