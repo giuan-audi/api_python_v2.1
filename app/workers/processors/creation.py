@@ -50,8 +50,20 @@ class WorkItemCreator(WorkItemProcessor):
         # --- Caso especial para AUTOMATION_SCRIPT ---
         if task_type == TaskType.AUTOMATION_SCRIPT:
             logger.info(f"Processando AUTOMATION_SCRIPT: {generated_text}")
-            item_ids.append(-1)  # Exemplo de ID fictício
-            return item_ids
+            automation_script = parser(generated_text, prompt_tokens, completion_tokens) # <--- Parse o script
+
+            # *** ENCONTRE O TEST CASE PAI ***
+            parent_test_case = db.query(TestCase).filter(TestCase.id == parent).first() # <--- Assumindo que 'parent' é o ID do TestCase
+            if parent_test_case: # *** VERIFIQUE SE O TEST CASE PAI EXISTE ***
+                parent_test_case.script = automation_script # <--- Salve o script no TestCase PAI
+                db.flush() # *** FLUSH PARA OBTER O ID ***
+                db.refresh(parent_test_case) # *** REFRESH PARA SINCRONIZAR O ESTADO ***
+                item_ids.append(parent_test_case.id) # <--- Adicione o ID do TestCase PAI
+                return item_ids
+            else: # *** TRATAMENTO DE ERRO SE O TEST CASE PAI NÃO EXISTIR ***
+                error_message = f"TestCase pai com ID {parent} não encontrado para Automation Script."
+                logger.error(error_message)
+                raise ValueError(error_message)
 
         # --- Caso especial para EPIC ---
         if task_type == TaskType.EPIC:
