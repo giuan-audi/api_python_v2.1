@@ -54,15 +54,17 @@ class Request(BaseModel):
     task_type: TaskTypeEnum = Field(..., description="Tipo de tarefa a ser gerada (epic, feature, user_story, task, bug, issue, pbi, test_case).")
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
-    work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")  # Adicionado
-    parent_board_id: Optional[str] = Field(None, description="ID do quadro pai no Azure DevOps (opcional).")   # Adicionado
-    type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress") # Adicionado
+    work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
+    parent_board_id: Optional[str] = Field(None, description="ID do quadro pai no Azure DevOps (opcional).")
+    type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress")
 
 
 class ReprocessRequest(BaseModel):
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
     type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress")
+    work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
+    parent_board_id: Optional[str] = Field(None, description="ID do quadro pai no Azure DevOps (opcional).")
 
 
 class Response(BaseModel):

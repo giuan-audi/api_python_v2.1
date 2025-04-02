@@ -89,9 +89,9 @@ async def get_status(request_id: str, db: Session = Depends(get_db)):
 # --- NOVA ROTA PARA REPROCESSAMENTO ---
 @router.post("/reprocess/{artifact_type}/{artifact_id}", response_model=Response, status_code=status.HTTP_202_ACCEPTED)
 async def reprocess(
-    artifact_type: str, 
-    artifact_id: int, 
-    request: ReprocessRequest, 
+    artifact_type: str,
+    artifact_id: int,
+    request: ReprocessRequest, # request agora é do tipo ReprocessRequest (atualizado)
     db: Session = Depends(get_db)
 ):
     """
@@ -104,7 +104,7 @@ async def reprocess(
         task_type_enum = TaskType(artifact_type)  # Converte a string para o enum TaskType
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Tipo de artefato inválido: {artifact_type}"
         )
 
@@ -128,7 +128,7 @@ async def reprocess(
         db.rollback()
         logger.error(f"Erro ao salvar requisição de reprocessamento no banco: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro ao salvar requisição no banco de dados."
         )
 
@@ -139,8 +139,8 @@ async def reprocess(
         "artifact_id": artifact_id,  # ID do artefato
         "prompt_data": request.prompt_data.model_dump(),  # Dados do prompt (incluindo user_input)
         "llm_config": request.llm_config.model_dump() if request.llm_config else None,  # Configurações da LLM (opcional)
-        "work_item_id": None,  # Não é necessário no reprocessamento
-        "parent_board_id": None,  # Não é necessário no reprocessamento
+        "work_item_id": request.work_item_id,  # <-- Passando work_item_id da requisição
+        "parent_board_id": request.parent_board_id,  # <-- Passando parent_board_id da requisição
         "type_test": request.type_test  # Passa o type_test para a task
     }
 
@@ -150,7 +150,7 @@ async def reprocess(
     except TypeError as e:
         logger.error(f"Erro ao enfileirar task Celery: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao enfileirar task Celery: {str(e)}"
         )
 
