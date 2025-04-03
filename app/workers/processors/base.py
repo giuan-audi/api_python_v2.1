@@ -124,10 +124,6 @@ class WorkItemProcessor(ABC):
                 self.db.commit()
                 self.update_request_status(request_id_interno, Status.COMPLETED)
 
-                # Ajuste na condição: só atualiza o parent se for uma criação (artifact_id is None)
-                # if artifact_id is None and (task_type_enum == TaskType.WBS):
-                #     parent = item_ids[0]
-
                 self.send_notification(
                     request_id_interno, str(parent),
                     task_type_enum.value, Status.COMPLETED, None, item_ids, new_version,
