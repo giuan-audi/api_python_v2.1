@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from app.schemas.schemas import Request as RequestSchema, Response, StatusResponse, LLMConfig, ReprocessRequest
 from app.database import get_db
 from sqlalchemy.orm import Session
-from app.models import Request as DBRequest, TaskType, Status
+from app.models import Request as DBRequest, TaskType, Status, Epic, Feature, UserStory, Task, TestCase, WBS, Bug, Issue, PBI
 import uuid
 from app.workers.consumer import process_message_task, reprocess_work_item_task
 from pydantic import ValidationError
@@ -11,6 +11,18 @@ import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+MODEL_MAP = {
+    TaskType.EPIC: Epic,
+    TaskType.FEATURE: Feature,
+    TaskType.USER_STORY: UserStory,
+    TaskType.TASK: Task,
+    TaskType.TEST_CASE: TestCase,
+    TaskType.WBS: WBS,
+    TaskType.BUG: Bug,
+    TaskType.ISSUE: Issue,
+    TaskType.PBI: PBI
+}
 
 
 @router.post("/generate/", response_model=Response, status_code=status.HTTP_201_CREATED)
@@ -91,62 +103,84 @@ async def get_status(request_id: str, db: Session = Depends(get_db)):
 async def reprocess(
     artifact_type: str,
     artifact_id: int,
-    request: ReprocessRequest, # request agora é do tipo ReprocessRequest (atualizado)
+    request: ReprocessRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    Reprocessa um artefato existente, gerando uma nova versão com base no input do usuário.
-    """
     logger.info(f"Requisição POST /reprocess/{artifact_type}/{artifact_id} recebida.")
 
-    # --- Validação do Tipo de Artefato ---
     try:
-        task_type_enum = TaskType(artifact_type)  # Converte a string para o enum TaskType
+        task_type_enum = TaskType(artifact_type)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Tipo de artefato inválido: {artifact_type}"
         )
 
-    # --- Criação do ID da Requisição (UUID) ---
-    request_id = str(uuid.uuid4())
+    # Buscar o artefato existente
+    model = MODEL_MAP.get(task_type_enum)
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tipo de artefato não suportado: {artifact_type}"
+        )
 
-    # --- Salvar a Requisição no Banco de Dados (com status PENDING) ---
+    existing_artifact = db.query(model).filter(model.id == artifact_id).first()
+    if not existing_artifact:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artefato {artifact_type} com ID {artifact_id} não encontrado"
+        )
+
+    # Determinar o parent_id com base no tipo de artefato
+    if task_type_enum == TaskType.EPIC:
+        parent_id = existing_artifact.team_project_id
+    elif task_type_enum in [TaskType.FEATURE, TaskType.USER_STORY, TaskType.TASK, TaskType.TEST_CASE, TaskType.WBS]:
+        parent_id = existing_artifact.parent
+    elif task_type_enum == TaskType.BUG:
+        parent_id = existing_artifact.user_story_id
+    elif task_type_enum == TaskType.ISSUE:
+        parent_id = existing_artifact.user_story_id
+    elif task_type_enum == TaskType.PBI:
+        parent_id = existing_artifact.feature_id
+    else:
+        parent_id = None
+
+    # Criar a requisição de reprocessamento
+    request_id = str(uuid.uuid4())
     try:
         db_request = DBRequest(
             request_id=request_id,
-            task_type=task_type_enum.value,  # Salva o tipo de tarefa (string)
+            task_type=task_type_enum.value,
             status=Status.PENDING.value,
-            parent=artifact_id,  # Salva o ID do artefato como 'parent'
-            artifact_type=artifact_type,  # Salva o tipo de artefato
-            artifact_id=artifact_id  # Salva o ID do artefato
+            parent=str(parent_id) if parent_id is not None else None,  # Corrigido
+            artifact_type=artifact_type,
+            artifact_id=artifact_id
         )
         db.add(db_request)
         db.commit()
         db.refresh(db_request)
     except Exception as e:
         db.rollback()
-        logger.error(f"Erro ao salvar requisição de reprocessamento no banco: {e}", exc_info=True)
+        logger.error(f"Erro ao salvar requisição de reprocessamento: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro ao salvar requisição no banco de dados."
         )
 
-    # --- Preparar os Argumentos para a Task Celery ---
+    # Preparar argumentos para a task Celery
     task_args = {
-        "request_id_interno": db_request.request_id,  # ID interno da requisição
-        "artifact_type": artifact_type,  # Tipo de artefato (string)
-        "artifact_id": artifact_id,  # ID do artefato
-        "prompt_data": request.prompt_data.model_dump(),  # Dados do prompt (incluindo user_input)
-        "llm_config": request.llm_config.model_dump() if request.llm_config else None,  # Configurações da LLM (opcional)
-        "work_item_id": request.work_item_id,  # <-- Passando work_item_id da requisição
-        "parent_board_id": request.parent_board_id,  # <-- Passando parent_board_id da requisição
-        "type_test": request.type_test  # Passa o type_test para a task
+        "request_id_interno": request_id,
+        "artifact_type": artifact_type,
+        "artifact_id": artifact_id,
+        "prompt_data": request.prompt_data.model_dump(),
+        "llm_config": request.llm_config.model_dump() if request.llm_config else None,
+        "work_item_id": request.work_item_id,
+        "parent_board_id": request.parent_board_id,
+        "type_test": request.type_test
     }
 
-    # --- Enfileirar a Task Celery ---
     try:
-        reprocess_work_item_task.delay(**task_args)  # Usa a nova task Celery
+        reprocess_work_item_task.delay(**task_args)
     except TypeError as e:
         logger.error(f"Erro ao enfileirar task Celery: {e}", exc_info=True)
         raise HTTPException(
@@ -154,10 +188,7 @@ async def reprocess(
             detail=f"Erro ao enfileirar task Celery: {str(e)}"
         )
 
-    logger.info(f"Task Celery 'reprocess_work_item_task' enfileirada para request_id: {request_id}.")
-
-    # --- Retornar Resposta (202 Accepted) ---
     return Response(
-        request_id=request_id,  # Retorna o ID da requisição
-        response={"status": "queued"}  # Indica que a requisição foi enfileirada
+        request_id=request_id,
+        response={"status": "queued"}
     )

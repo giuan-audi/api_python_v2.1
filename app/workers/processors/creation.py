@@ -10,7 +10,12 @@ logger = logging.getLogger(__name__)
 
 class WorkItemCreator(WorkItemProcessor):
     def _process_item(self, task_type_enum: TaskType, parent: int, prompt_tokens: int, completion_tokens: int,
-                      work_item_id: Optional[int], parent_board_id: Optional[int], generated_text: str) -> Tuple[List[int], int]:
+                      work_item_id: Optional[int], parent_board_id: Optional[int], generated_text: str,
+                      artifact_id: Optional[int] = None) -> Tuple[List[int], int]:
+        """
+        Processa a criação de um novo artefato (Epic, Feature, etc.).
+        """
+        # Lógica existente para criação de novos itens (mantida igual)
         existing_items = self.get_existing_items(self.db, task_type_enum, parent)
         new_version = self.get_new_version(existing_items)
         self.deactivate_existing_items(self.db, existing_items, task_type_enum)

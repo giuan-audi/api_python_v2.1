@@ -22,8 +22,17 @@ class WorkItemProcessor(ABC):
         self.llm_agent = LLMAgent()
 
     @abstractmethod
-    def _process_item(self, task_type_enum: TaskType, parent: int, prompt_tokens: int, completion_tokens: int,
-                      work_item_id: Optional[int], parent_board_id: Optional[int], generated_text: str) -> Tuple[List[int], int]:
+    def _process_item(
+        self,
+        task_type_enum: TaskType,
+        parent: int,
+        prompt_tokens: int,
+        completion_tokens: int,
+        work_item_id: Optional[int],
+        parent_board_id: Optional[int],
+        generated_text: str,
+        artifact_id: Optional[int] = None  # Novo parâmetro
+    ) -> Tuple[List[int], int]:
         pass
 
     def process(
@@ -57,19 +66,33 @@ class WorkItemProcessor(ABC):
                 self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
                 return
 
-            # Determinar o parent corretamente
-            if artifact_id is not None:
-                parent = artifact_id  # Usar artifact_id para reprocessamento
-            else:
-                parent_str = db_request.parent
-                try:
-                    parent = int(parent_str)
-                except ValueError as e:
-                    error_message = f"Parent inválido: {db_request.parent}"
+            # Determinar o parent corretamente - Lógica Simplificada e Unificada
+            if artifact_id is not None: # REPROCESSAMENTO: Buscar parent original pelo artifact_id
+                artifact_type_enum = TaskType(task_type)
+                parent = self._get_original_parent_id(artifact_type_enum, artifact_id) # Busca o parent original
+                if parent is None:
+                    error_message = f"Parent original não encontrado para artefato tipo: {task_type}, ID: {artifact_id}"
                     logger.error(error_message)
                     self.update_request_status(request_id_interno, Status.FAILED, error_message)
                     self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
                     return
+            else: # CRIAÇÃO: Usar parent da requisição (db_request.parent)
+                parent_str = db_request.parent
+                if parent_str is None:
+                    error_message = f"Parent inválido: parent está None para request_id: {request_id_interno}"
+                    logger.error(error_message)
+                    self.update_request_status(request_id_interno, Status.FAILED, error_message)
+                    self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
+                    return
+                try:
+                    parent = int(parent_str)
+                except ValueError as e:
+                    error_message = f"Parent inválido: não é um inteiro válido: {db_request.parent}"
+                    logger.error(error_message)
+                    self.update_request_status(request_id_interno, Status.FAILED, error_message)
+                    self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
+                    return
+
 
             # --- Processamento do LLM ---
             try:
@@ -87,17 +110,28 @@ class WorkItemProcessor(ABC):
 
                 logger.debug(f"Texto gerado pela LLM para request_id {request_id_interno}: {generated_text}")
 
-                item_ids, new_version = self._process_item(task_type_enum, parent, prompt_tokens, completion_tokens, work_item_id, parent_board_id, generated_text)
+                item_ids, new_version = self._process_item(
+                    task_type_enum,
+                    parent,  # parent original (ex: team_project_id)
+                    prompt_tokens,
+                    completion_tokens,
+                    work_item_id,
+                    parent_board_id,
+                    generated_text,
+                    artifact_id=artifact_id if artifact_id else None
+                )
 
                 self.db.commit()
                 self.update_request_status(request_id_interno, Status.COMPLETED)
 
-                if task_type_enum == TaskType.EPIC or task_type_enum == TaskType.WBS:
-                    parent = item_ids[0]
+                # Ajuste na condição: só atualiza o parent se for uma criação (artifact_id is None)
+                # if artifact_id is None and (task_type_enum == TaskType.WBS):
+                #     parent = item_ids[0]
+
                 self.send_notification(
                     request_id_interno, str(parent),
                     task_type_enum.value, Status.COMPLETED, None, item_ids, new_version,
-                    work_item_id, parent_board_id
+                    work_item_id, parent_board_id, is_reprocessing=(artifact_id is not None)
                 )
 
             except InvalidModelError as e:
@@ -113,7 +147,7 @@ class WorkItemProcessor(ABC):
                 return
 
             except pika.exceptions.AMQPConnectionError as e:
-                logger.error(f"Erro de conexão com RabbitMQ: {e}", exc_info=True)
+                self.handle_amqp_connection_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
                 return
 
             except Exception as e:
@@ -125,6 +159,38 @@ class WorkItemProcessor(ABC):
             logger.debug("Recursos liberados")
 
     # --- Funções auxiliares (agora métodos da classe) ---
+
+    def _get_original_parent_id(self, task_type: TaskType, artifact_id: int) -> Optional[int]:
+        """
+        Busca o ID do parent original de um artefato existente no banco de dados.
+        Retorna None se o artefato ou seu parent não forem encontrados, ou se o tipo de artefato não for suportado.
+        """
+        model_map = {
+            TaskType.FEATURE: (Feature, Feature.parent),
+            TaskType.USER_STORY: (UserStory, UserStory.parent),
+            TaskType.TASK: (Task, Task.parent),
+            TaskType.BUG: (Bug, Bug.user_story_id),
+            TaskType.ISSUE: (Issue, Issue.user_story_id),
+            TaskType.PBI: (PBI, PBI.feature_id),
+            TaskType.TEST_CASE: (TestCase, TestCase.parent),
+            TaskType.WBS: (WBS, WBS.parent),
+            TaskType.EPIC: (Epic, Epic.team_project_id), # Epic's parent is team_project_id in this context, or perhaps None if root level. Adjust if needed.
+            TaskType.AUTOMATION_SCRIPT: (None, None),
+        }
+        model, parent_column = model_map.get(task_type, (None, None)) # Get model and parent column, default to None if type not found
+
+        if model is None or parent_column is None:
+            logger.warning(f"Tipo de artefato não suportado para buscar parent original: {task_type}")
+            return None
+
+        artifact = self.db.query(model).filter(model.id == artifact_id).first()
+        if not artifact:
+            logger.warning(f"Artefato não encontrado para tipo: {task_type}, ID: {artifact_id}")
+            return None
+
+        return getattr(artifact, parent_column.name) # Dynamically get parent ID using column name
+
+
     def process_prompt_data(self, prompt_data: dict, type_test: Optional[str]) -> dict:
         prompt_data_dict = prompt_data.copy()
         if 'user_input' in prompt_data_dict:
@@ -202,7 +268,7 @@ class WorkItemProcessor(ABC):
     def send_notification(self, request_id: str, parent: str, task_type: str, status: Status,
                           error_message: Optional[str], item_ids: Optional[List[int]] = None,
                           version: Optional[int] = None, work_item_id: Optional[int] = None,
-                          parent_board_id: Optional[int] = None):
+                          parent_board_id: Optional[int] = None, is_reprocessing: bool = False):
         """Envia notificação para o RabbitMQ."""
         notification_data = {
             "request_id": request_id,
@@ -213,7 +279,8 @@ class WorkItemProcessor(ABC):
             "item_ids": item_ids if item_ids is not None else [],
             "version": version,
             "work_item_id": work_item_id,
-            "parent_board_id": parent_board_id
+            "parent_board_id": parent_board_id,
+            "is_reprocessing": is_reprocessing
         }
 
         try:
@@ -274,6 +341,19 @@ class WorkItemProcessor(ABC):
             request_id, db_request.parent, task_type.value, Status.FAILED, error_message,
             None, None, work_item_id, parent_board_id
         )
+
+    def handle_amqp_connection_error(self, request_id: str, db_request: Request, task_type: TaskType,
+                                     error: pika.exceptions.AMQPConnectionError, work_item_id: Optional[int],
+                                     parent_board_id: Optional[int]):
+        """Trata erros de conexão com RabbitMQ."""
+        error_message = f"Erro de conexão com RabbitMQ: {error}"
+        logger.error(error_message, exc_info=True)
+        self.update_request_status(request_id, Status.FAILED, error_message)
+        self.send_notification(
+            request_id, db_request.parent, task_type.value, Status.FAILED, error_message,
+            None, None, work_item_id, parent_board_id
+        )
+
 
     def close_resources(self):
         """Fecha conexões com recursos externos."""

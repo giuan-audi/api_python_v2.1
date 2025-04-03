@@ -11,19 +11,20 @@ class WorkItemReprocessor(WorkItemProcessor):
     def _process_item(
         self,
         task_type_enum: TaskType,
-        artifact_id: int,
+        parent: int,  # Agora recebe o parent corretamente
         prompt_tokens: int,
         completion_tokens: int,
         work_item_id: Optional[int],
         parent_board_id: Optional[int],
-        generated_text: str
+        generated_text: str,
+        artifact_id: Optional[int] = None  # Recebe o artifact_id
     ) -> Tuple[List[int], int]:
         """
         Reprocessa um artefato existente, atualizando seus campos.
         Atualiza os campos comuns e específicos de cada tipo sem criar registros duplicados.
         """
-        # Busca o item existente
         existing_item = self._get_existing_item(task_type_enum, artifact_id)
+        
         if not existing_item:
             raise ValueError(f"Item do tipo {task_type_enum} com ID {artifact_id} não encontrado.")
 
