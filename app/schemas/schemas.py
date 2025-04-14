@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, validator
 from typing import Dict, List, Optional, Any
 from enum import Enum
 from datetime import datetime
+from uuid import UUID
 
 
 class LLMConfig(BaseModel):
@@ -50,7 +51,7 @@ class PromptData(BaseModel):
 
 
 class Request(BaseModel):
-    parent: int = Field(..., description="ID do item pai (Épico, Feature, etc.) gerado pelo cliente.")  # Renomeado e agora é INT
+    parent: int = Field(..., description="ID do item pai (Épico, Feature, etc.) gerado pelo cliente.")
     task_type: TaskTypeEnum = Field(..., description="Tipo de tarefa a ser gerada (epic, feature, user_story, task, bug, issue, pbi, test_case).")
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
@@ -74,6 +75,7 @@ class Response(BaseModel):
 
 class StatusResponse(BaseModel):
     request_id: str = Field(..., description="ID da requisição da API (interno).")
+    project_id: Optional[str] = Field(None, description="ID do Projeto (UUID) associado à requisição, se disponível.")
     parent: int = Field(..., description="ID do item pai.")
     task_type: str = Field(..., description="Tipo da tarefa.")
     status: str = Field(..., description="Status da requisição (pending, completed, failed).")
@@ -81,6 +83,18 @@ class StatusResponse(BaseModel):
     processed_at: Optional[datetime] = Field(None, description="Data de processamento da requisição (se completada).")
     artifact_type: str = Field(..., description="Tipo de artefato")
     artifact_id: int = Field(..., description="ID do artefato")
+
+
+class IndependentCreationRequest(BaseModel):
+    project_id: UUID = Field(..., description="ID do Projeto (UUID) ao qual o artefato pertence.")
+    task_type: TaskTypeEnum = Field(..., description="Tipo de tarefa a ser gerada (epic, feature, user_story, task, etc.).")
+    prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM (inclui user_input).")
+    parent: Optional[int] = Field(None, description="ID do item pai (opcional para esta rota).") # Opcional
+    llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
+    work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
+    parent_board_id: Optional[str] = Field(None, description="ID do quadro pai no Azure DevOps (opcional).")
+    type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress")
+
 
 class ReflectionResponse(BaseModel):
     problem: str = Field(..., description="Descrição do problema que o sistema resolve e seu impacto.")

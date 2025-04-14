@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, status
-from app.schemas.schemas import Request as RequestSchema, Response, StatusResponse, LLMConfig, ReprocessRequest
+from app.schemas.schemas import Request as RequestSchema, Response, IndependentCreationRequest, StatusResponse, LLMConfig, ReprocessRequest
 from app.database import get_db
 from sqlalchemy.orm import Session
 from app.models import Request as DBRequest, TaskType, Status, Epic, Feature, UserStory, Task, TestCase, WBS, Bug, Issue, PBI
 import uuid
-from app.workers.consumer import process_message_task, reprocess_work_item_task
+from app.workers.consumer import process_message_task, reprocess_work_item_task, process_independent_creation_task
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 import logging
@@ -190,5 +190,80 @@ async def reprocess(
 
     return Response(
         request_id=request_id,
+        response={"status": "queued"}
+    )
+
+# --- ROTA PARA CRIAÇÃO DE ARTEFATOS INDEPENDENTE ---
+@router.post("/independent/", response_model=Response, status_code=status.HTTP_201_CREATED)
+async def create_independent(request: IndependentCreationRequest, db: Session = Depends(get_db)):
+    """
+    Cria um artefato de forma mais independente, exigindo project_id
+    e permitindo um parent opcional.
+    """
+    logger.info(f"Requisição POST /independent/ recebida. Task Type: {request.task_type}, Project ID: {request.project_id}, Parent ID: {request.parent}")
+
+    # Gerar ID único para a requisição interna
+    request_id_interno = str(uuid.uuid4())
+
+    try:
+        # Criar registro da requisição no banco de dados
+        db_request = DBRequest(
+            request_id=request_id_interno,
+            project_id=request.project_id, # Salva o project_id (obrigatório)
+            parent=str(request.parent) if request.parent is not None else None, # Salva o parent (opcional) como string ou None
+            task_type=request.task_type.value,
+            status=Status.PENDING.value,
+            # artifact_type e artifact_id são None para criação
+            artifact_type=None,
+            artifact_id=None
+        )
+        db.add(db_request)
+        db.commit()
+        db.refresh(db_request)
+        logger.info(f"Registro DBRequest criado para /independent/ com request_id: {request_id_interno}")
+
+    except IntegrityError as e:
+        logger.error(f"Erro de integridade ao salvar requisição /independent/ no banco: {e}")
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Erro de integridade: {e}")
+    except Exception as e:
+        logger.error(f"Erro inesperado ao salvar requisição /independent/ no banco: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro interno ao salvar requisição: {str(e)}")
+
+    # Preparar os argumentos para a nova task Celery
+    # Usar configurações da LLM da requisição, se fornecidas, ou usar padrões (embora LLMConfig() não seja o ideal aqui, mantendo a lógica)
+    llm_config = request.llm_config or LLMConfig() # Ou apenas passar o dicionário se ele existir
+
+    task_args = {
+        "request_id_interno": request_id_interno,
+        "project_id": str(request.project_id), # Passar project_id como string para Celery/JSON
+        "parent": request.parent, # Passar parent (int ou None)
+        "task_type": request.task_type.value,
+        "prompt_data": request.prompt_data.model_dump(),
+        "llm_config": llm_config.model_dump() if request.llm_config else None,
+        "work_item_id": request.work_item_id,
+        "parent_board_id": request.parent_board_id,
+        "type_test": request.type_test
+    }
+
+    # Enviar a nova task para o Celery
+    try:
+        # Chamar a NOVA task Celery
+        process_independent_creation_task.delay(**task_args)
+        logger.info(f"Task Celery 'process_independent_creation_task' enfileirada para request_id: {request_id_interno}.")
+    except Exception as e: # Capturar exceção mais genérica ao enfileirar
+        logger.error(f"Erro ao enfileirar task Celery 'process_independent_creation_task': {e}", exc_info=True)
+        # Considerar reverter o DBRequest ou marcar como falha se o enfileiramento falhar?
+        # Por ora, apenas logamos e retornamos erro 500.
+        # TODO: Avaliar estratégia de compensação se o enfileiramento falhar após salvar no DB.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao enfileirar tarefa de processamento: {str(e)}"
+        )
+
+    # Retornar resposta de sucesso para o cliente
+    return Response(
+        request_id=request_id_interno,
         response={"status": "queued"}
     )

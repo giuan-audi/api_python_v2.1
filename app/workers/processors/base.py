@@ -12,6 +12,7 @@ import pika
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 import logging
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,11 @@ class WorkItemProcessor(ABC):
         parent: int,
         prompt_tokens: int,
         completion_tokens: int,
-        work_item_id: Optional[int],
-        parent_board_id: Optional[int],
+        work_item_id: Optional[str], # Ajustado para str
+        parent_board_id: Optional[str], # Ajustado para str
         generated_text: str,
-        artifact_id: Optional[int] = None  # Novo parâmetro
+        artifact_id: Optional[int] = None,
+        project_id: Optional[UUID] = None  # Novo parâmetro
     ) -> Tuple[List[int], int]:
         pass
 
@@ -41,65 +43,81 @@ class WorkItemProcessor(ABC):
         task_type: str,
         prompt_data: dict,
         llm_config: Optional[dict] = None,
-        work_item_id: Optional[int] = None,
-        parent_board_id: Optional[int] = None,
-        type_test: Optional[str] = None,  # Parâmetro já existente
-        artifact_id: Optional[int] = None
+        work_item_id: Optional[str] = None, # Ajustado para str
+        parent_board_id: Optional[str] = None, # Ajustado para str
+        type_test: Optional[str] = None,
+        artifact_id: Optional[int] = None,
+        project_id_str: Optional[str] = None # <-- Recebe a string da Task
     ):
+        project_uuid: Optional[UUID] = None # Variável para armazenar o UUID validado
+        db_request = None # Inicializar para o bloco finally
 
         try:
-            logger.info(f"Processando item para request_id: {request_id_interno}, task_type: {task_type}")
+            logger.info(f"Processando item para request_id: {request_id_interno}, task_type: {task_type}, project_id_str: {project_id_str}")
 
+            # --- Validação Inicial (Task Type e Project ID) ---
             try:
                 task_type_enum = TaskType(task_type)
             except ValueError as e:
+                # Tratamento de erro já existente para task_type inválido
                 error_message = f"Task type inválido: {task_type}"
                 logger.error(error_message)
-                self.update_request_status(request_id_interno, Status.FAILED, error_message)
-                self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
+                # Tenta atualizar status se já tiver buscado db_request, senão só loga
+                if db_request:
+                     self.update_request_status(request_id_interno, Status.FAILED, error_message)
+                     self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message) # project_id é None aqui
                 return
 
+            # Validação do project_id_str (se fornecido)
+            if project_id_str is not None:
+                try:
+                    project_uuid = UUID(project_id_str)
+                except ValueError: # Usar o ValueError built-in
+                    error_message = f"Project ID inválido (formato UUID esperado): {project_id_str}"
+                    logger.error(f"{error_message} para request_id: {request_id_interno}")
+                    # Tentar buscar db_request para atualizar status
+                    db_request = self.db.query(Request).filter(Request.request_id == request_id_interno).first()
+                    if db_request:
+                         self.update_request_status(request_id_interno, Status.FAILED, error_message)
+                         # Passa project_id=None pois a conversão falhou
+                         self.send_notification(request_id_interno, db_request.parent, task_type, Status.FAILED, error_message, project_id=None)
+                    return # Interrompe o processamento
+
+            # --- Busca da Requisição no DB ---
             db_request = self.db.query(Request).filter(Request.request_id == request_id_interno).first()
             if not db_request:
                 error_message = f"Requisição {request_id_interno} não encontrada"
                 logger.error(error_message)
-                self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
+                # project_uuid pode ser None ou ter sido validado
+                self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message, project_id=project_uuid)
                 return
 
-            # Determinar o parent corretamente - Lógica Simplificada e Unificada
-            if artifact_id is not None: # REPROCESSAMENTO: Buscar parent original pelo artifact_id
-                artifact_type_enum = TaskType(task_type)
-                parent = self._get_original_parent_id(artifact_type_enum, artifact_id) # Busca o parent original
-                if parent is None:
-                    error_message = f"Parent original não encontrado para artefato tipo: {task_type}, ID: {artifact_id}"
-                    logger.error(error_message)
-                    self.update_request_status(request_id_interno, Status.FAILED, error_message)
-                    self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
-                    return
-            else: # CRIAÇÃO: Usar parent da requisição (db_request.parent)
-                parent_str = db_request.parent
-                if parent_str is None:
-                    error_message = f"Parent inválido: parent está None para request_id: {request_id_interno}"
-                    logger.error(error_message)
-                    self.update_request_status(request_id_interno, Status.FAILED, error_message)
-                    self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
-                    return
+            # --- Determinação do Parent Hierárquico ---
+            parent_id_hierarquico: Optional[int] = None
+            if artifact_id is not None: # REPROCESSAMENTO
+                parent_id_hierarquico = self._get_original_parent_id(task_type_enum, artifact_id)
+                if parent_id_hierarquico is None and task_type_enum != TaskType.EPIC: # Permitir Epic sem parent original definido?
+                     error_message = f"Parent original não encontrado para artefato tipo: {task_type}, ID: {artifact_id}"
+                     logger.error(error_message)
+                     self.update_request_status(request_id_interno, Status.FAILED, error_message)
+                     self.send_notification(request_id_interno, db_request.parent, task_type, Status.FAILED, error_message, project_id=project_uuid)
+                     return
+            elif db_request.parent is not None: # CRIAÇÃO (com parent fornecido na request, seja /generate ou /independent)
                 try:
-                    parent = int(parent_str)
-                except ValueError as e:
-                    error_message = f"Parent inválido: não é um inteiro válido: {db_request.parent}"
+                    parent_id_hierarquico = int(db_request.parent)
+                except ValueError:
+                    error_message = f"Parent inválido na requisição DB: {db_request.parent}"
                     logger.error(error_message)
                     self.update_request_status(request_id_interno, Status.FAILED, error_message)
-                    self.send_notification(request_id_interno, None, task_type, Status.FAILED, error_message)
+                    self.send_notification(request_id_interno, db_request.parent, task_type, Status.FAILED, error_message, project_id=project_uuid)
                     return
+            # Se for criação pela rota /independent sem parent, parent_id_hierarquico permanecerá None
 
-
-            # --- Processamento do LLM ---
+            # --- Processamento do LLM e Persistência ---
+            # (try-except bloco para LLM, parsing, commit)
             try:
                 logger.info(f"Chamando LLMAgent para request_id: {request_id_interno}")
-
                 prompt_data_dict = self.process_prompt_data(prompt_data, type_test)
-
                 if llm_config:
                     self.configure_llm_agent(self.llm_agent, llm_config)
 
@@ -107,48 +125,61 @@ class WorkItemProcessor(ABC):
                 generated_text = llm_response["text"]
                 prompt_tokens = llm_response["prompt_tokens"]
                 completion_tokens = llm_response["completion_tokens"]
-
                 logger.debug(f"Texto gerado pela LLM para request_id {request_id_interno}: {generated_text}")
 
+                # Passa parent_id_hierarquico e project_uuid validados
                 item_ids, new_version = self._process_item(
-                    task_type_enum,
-                    parent,  # parent original (ex: team_project_id)
-                    prompt_tokens,
-                    completion_tokens,
-                    work_item_id,
-                    parent_board_id,
-                    generated_text,
-                    artifact_id=artifact_id if artifact_id else None
+                    task_type_enum=task_type_enum,
+                    parent=parent_id_hierarquico, # Pode ser None
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    work_item_id=work_item_id,
+                    parent_board_id=parent_board_id,
+                    generated_text=generated_text,
+                    artifact_id=artifact_id,
+                    project_id=project_uuid # Passa o UUID validado (ou None)
                 )
 
                 self.db.commit()
                 self.update_request_status(request_id_interno, Status.COMPLETED)
 
+                # Envia notificação passando o parent hierárquico e o project_uuid
                 self.send_notification(
-                    request_id_interno, str(parent),
-                    task_type_enum.value, Status.COMPLETED, None, item_ids, new_version,
-                    work_item_id, parent_board_id, is_reprocessing=(artifact_id is not None)
+                    request_id=request_id_interno,
+                    parent=str(parent_id_hierarquico) if parent_id_hierarquico is not None else None,
+                    task_type=task_type_enum.value,
+                    status=Status.COMPLETED,
+                    error_message=None,
+                    item_ids=item_ids,
+                    version=new_version,
+                    work_item_id=work_item_id,
+                    parent_board_id=parent_board_id,
+                    is_reprocessing=(artifact_id is not None),
+                    project_id=project_uuid # Passa o UUID validado (ou None)
                 )
 
+            # (blocos except para InvalidModelError, parsing, IntegrityError, AMQPConnectionError, Exception genérica)
+            # ... garantir que chamem send_notification passando project_uuid nos casos de erro ...
             except InvalidModelError as e:
-                self.handle_invalid_model_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
+                # (Usar self.handle_invalid_model_error, que chama send_notification)
+                self.handle_invalid_model_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id, project_uuid) # Passa project_uuid
                 return
-
             except (json.JSONDecodeError, KeyError, ValidationError) as e:
-                self.handle_parsing_error(request_id_interno, db_request, task_type_enum, e, generated_text, work_item_id, parent_board_id)
+                # (Usar self.handle_parsing_error)
+                self.handle_parsing_error(request_id_interno, db_request, task_type_enum, e, generated_text, work_item_id, parent_board_id, project_uuid) # Passa project_uuid
                 return
-
             except IntegrityError as e:
-                self.handle_integrity_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
+                 # (Usar self.handle_integrity_error)
+                self.handle_integrity_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id, project_uuid) # Passa project_uuid
                 return
-
             except pika.exceptions.AMQPConnectionError as e:
-                self.handle_amqp_connection_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
+                # (Usar self.handle_amqp_connection_error)
+                self.handle_amqp_connection_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id, project_uuid) # Passa project_uuid
                 return
-
             except Exception as e:
-                self.handle_generic_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id)
-                raise
+                # (Usar self.handle_generic_error)
+                self.handle_generic_error(request_id_interno, db_request, task_type_enum, e, work_item_id, parent_board_id, project_uuid) # Passa project_uuid
+                raise # Re-lança exceção genérica
 
         finally:
             self.close_resources()
@@ -261,14 +292,19 @@ class WorkItemProcessor(ABC):
             logger.error(f"Erro ao atualizar status: {e}", exc_info=True)
             self.db.rollback()
 
-    def send_notification(self, request_id: str, parent: str, task_type: str, status: Status,
-                          error_message: Optional[str], item_ids: Optional[List[int]] = None,
-                          version: Optional[int] = None, work_item_id: Optional[int] = None,
-                          parent_board_id: Optional[int] = None, is_reprocessing: bool = False):
+    def send_notification(self, request_id: str, parent: Optional[str], task_type: str, status: Status, # <-- parent Optional[str]
+                      error_message: Optional[str], item_ids: Optional[List[int]] = None,
+                      version: Optional[int] = None, work_item_id: Optional[str] = None, # <-- str
+                      parent_board_id: Optional[str] = None, # <-- str
+                      is_reprocessing: bool = False,
+                      project_id: Optional[UUID] = None): # <-- ACEITA UUID
         """Envia notificação para o RabbitMQ."""
+        project_id_str = str(project_id) if project_id else None # <-- CONVERTE para string ou None
+
         notification_data = {
             "request_id": request_id,
-            "parent": parent,
+            "project_id": project_id_str, # <-- ADICIONADO/ATUALIZADO
+            "parent": parent, # Já era opcional e string
             "task_type": task_type,
             "status": status.value,
             "error_message": error_message,
@@ -286,15 +322,14 @@ class WorkItemProcessor(ABC):
             logger.error(f"Falha ao enviar notificação: {e}", exc_info=True)
 
     def handle_invalid_model_error(self, request_id: str, db_request: Request, task_type: TaskType,
-                                   error: InvalidModelError, work_item_id: Optional[int],
-                                   parent_board_id: Optional[int]):
-        """Trata erros de modelo inválido."""
+                                error: InvalidModelError, work_item_id: Optional[str],
+                                parent_board_id: Optional[str], project_id: Optional[UUID] = None):
         error_message = f"Erro de modelo LLM: {error}"
         logger.error(error_message, exc_info=True)
         self.update_request_status(request_id, Status.FAILED, error_message)
         self.send_notification(
             request_id, db_request.parent, task_type.value, Status.FAILED, error_message,
-            None, None, work_item_id, parent_board_id
+            None, None, work_item_id, parent_board_id, project_id=project_id # <--- PASS project_id
         )
 
     def handle_parsing_error(self, request_id: str, db_request: Request, task_type: TaskType,

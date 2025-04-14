@@ -107,6 +107,9 @@ class LLMAgent:
             if gemini_model is None:
                 gemini_model = os.getenv("GEMINI_MODEL", "gemini-pro")
             model_to_use = gemini_model
+        
+        formatted_prompt_log = f"Prompt Data para LLM ({chosen_llm}): {prompt_data}"
+        logger.info(formatted_prompt_log)
 
         try:
             if chosen_llm == "openai":

@@ -6,31 +6,39 @@ from app.utils import parsers
 from sqlalchemy.orm import Session
 import logging
 from datetime import datetime
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
 class WorkItemCreator(WorkItemProcessor):
     def _process_item(self, task_type_enum: TaskType, parent: int, prompt_tokens: int, completion_tokens: int,
                       work_item_id: Optional[int], parent_board_id: Optional[int], generated_text: str,
-                      artifact_id: Optional[int] = None) -> Tuple[List[int], int]:
+                      artifact_id: Optional[int] = None, project_id: Optional[UUID] = None) -> Tuple[List[int], int]:
         """
         Processa a criação de um novo artefato (Epic, Feature, etc.).
+        O 'parent' aqui é o ID hierárquico (pode ser None para /independent).
         """
-        # Lógica existente para criação de novos itens (mantida igual)
-        existing_items = self.get_existing_items(self.db, task_type_enum, parent)
-        new_version = self.get_new_version(existing_items)
-        self.deactivate_existing_items(self.db, existing_items, task_type_enum)
+        # Lógica de desativação (precisa de um 'parent' para buscar itens existentes)
+        # Se parent for None, não há itens existentes para desativar/versionar com base nele.
+        # A versão será sempre 1 neste caso.
+        new_version = 1
+        if parent is not None:
+            existing_items = self.get_existing_items(self.db, task_type_enum, parent)
+            new_version = self.get_new_version(existing_items)
+            self.deactivate_existing_items(self.db, existing_items, task_type_enum)
 
         item_ids = self.create_new_items(
             self.db, task_type_enum, generated_text, parent,
-            prompt_tokens, completion_tokens, new_version, work_item_id, parent_board_id
+            prompt_tokens, completion_tokens, new_version, work_item_id, 
+            parent_board_id, project_id
         )
 
         return item_ids, new_version
 
     def create_new_items(self, db: Session, task_type: TaskType, generated_text: str, parent: int,
                          prompt_tokens: int, completion_tokens: int, version: int,
-                         work_item_id: Optional[str], parent_board_id: Optional[str]) -> List[int]:
+                         work_item_id: Optional[str], parent_board_id: Optional[str],
+                         project_id: Optional[UUID] = None) -> List[int]:
         """
         Cria novos itens no banco de dados com base no tipo de tarefa e no texto gerado pela LLM.
         Retorna uma lista de IDs dos itens criados.
@@ -68,7 +76,7 @@ class WorkItemCreator(WorkItemProcessor):
                     # Atualiza o conteúdo do script no TestCase pai
                     parent_test_case.script = automation_script
 
-                    # *** CORREÇÃO: ATUALIZA OS TOKENS NO TESTCASE PAI ***
+                    # *** ATUALIZA OS TOKENS NO TESTCASE PAI ***
                     # Soma os novos tokens aos existentes (ou inicia com 0 se for None)
                     parent_test_case.prompt_tokens = (parent_test_case.prompt_tokens or 0) + prompt_tokens
                     parent_test_case.completion_tokens = (parent_test_case.completion_tokens or 0) + completion_tokens
@@ -104,6 +112,7 @@ class WorkItemCreator(WorkItemProcessor):
             new_epic.team_project_id = parent
             new_epic.work_item_id = work_item_id
             new_epic.parent_board_id = parent_board_id
+            if project_id: new_epic.project_id = project_id
             # Não precisa setar created_at/updated_at aqui, o DB faz isso via server_default/onupdate
             db.add(new_epic)
             db.flush() # Envia o comando INSERT para o DB e obtém o ID gerado
@@ -122,6 +131,7 @@ class WorkItemCreator(WorkItemProcessor):
             new_wbs.parent = parent
             new_wbs.work_item_id = work_item_id
             new_wbs.parent_board_id = parent_board_id
+            if project_id: new_wbs.project_id = project_id
             db.add(new_wbs)
             db.flush()
             db.refresh(new_wbs)
@@ -158,6 +168,7 @@ class WorkItemCreator(WorkItemProcessor):
                 # 'parent' já foi definido dentro do parser para esses tipos
                 item.work_item_id = work_item_id
                 item.parent_board_id = parent_board_id
+                if project_id: item.project_id = project_id
 
                 # Lógica específica para TEST_CASE: configurar Actions
                 if task_type == TaskType.TEST_CASE and hasattr(item, 'actions'):

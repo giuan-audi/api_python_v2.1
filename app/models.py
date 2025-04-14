@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
 import enum
 
 Base = declarative_base()
@@ -31,6 +32,7 @@ class Epic(Base):
     id = Column(Integer, primary_key=True)  # ID interno (INT), autoincremental
     team_project_id = Column(Integer)  # ID do projeto da equipe (fornecido pelo backend .NET)
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
     tags = Column(JSON)
     version = Column(Integer, default=1)
@@ -51,6 +53,7 @@ class Feature(Base):
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para epic (parent)
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
@@ -70,6 +73,7 @@ class UserStory(Base):
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('features.id'))
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
     acceptance_criteria = Column(Text)
     priority = Column(String)
@@ -93,6 +97,7 @@ class Task(Base):
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para user story (parent)
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
     estimate = Column(String)
     version = Column(Integer, default=1)
@@ -114,6 +119,7 @@ class Bug(Base):  # Não vamos alterar por enquanto
     issue_id = Column(Integer, ForeignKey('issues.id'), nullable=True)
     user_story_id = Column(Integer, ForeignKey('user_stories.id'), nullable=True)
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     repro_steps = Column(Text)
     system_info = Column(Text)
     tags = Column(JSON)
@@ -135,6 +141,7 @@ class Issue(Base):# Não vamos alterar por enquanto
     id = Column(Integer, primary_key=True)
     user_story_id = Column(Integer, ForeignKey('user_stories.id'))
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
     tags = Column(JSON)
     version = Column(Integer, default=1)
@@ -155,6 +162,7 @@ class PBI(Base):# Não vamos alterar por enquanto
     id = Column(Integer, primary_key=True)
     feature_id = Column(Integer, ForeignKey('features.id'))
     title = Column(String)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
     tags = Column(JSON)
     version = Column(Integer, default=1)
@@ -175,6 +183,7 @@ class Request(Base):
     id = Column(Integer, primary_key=True)
     request_id = Column(String, unique=True)
     parent = Column(Integer)
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     task_type = Column(String)
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -190,6 +199,7 @@ class TestCase(Base):
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para User Story
     title = Column(String)  # Adicionado title para o caso de teste
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     gherkin = Column(JSON)  # Agora armazena o Gherkin como JSON
     script = Column(Text, nullable=True)  # <-- Adicionado: Campo para o script de automação
     version = Column(Integer, default=1)
@@ -224,6 +234,7 @@ class WBS(Base):
     __tablename__ = "wbs"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para Epic
+    project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     wbs = Column(JSON)  # Armazena a WBS como JSON
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
