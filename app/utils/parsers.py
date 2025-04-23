@@ -60,6 +60,7 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
                     parent=parent_id,
                     title=feat.title,
                     description=feat.description,
+                    acceptance_criteria=feat.acceptance_criteria,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     # reflection=feat.reflection
@@ -77,6 +78,7 @@ def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, co
                 parent=parent_id,
                 title=validated_feature.title,
                 description=validated_feature.description,
+                acceptance_criteria=validated_feature.acceptance_criteria,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 # reflection=validated_feature.reflection

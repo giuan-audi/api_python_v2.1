@@ -42,6 +42,7 @@ class WorkItemProcessor(ABC):
         request_id_interno: str,
         task_type: str,
         prompt_data: dict,
+        language: Optional[str] = "português",
         llm_config: Optional[dict] = None,
         work_item_id: Optional[str] = None, # Ajustado para str
         parent_board_id: Optional[str] = None, # Ajustado para str
@@ -51,6 +52,8 @@ class WorkItemProcessor(ABC):
     ):
         project_uuid: Optional[UUID] = None # Variável para armazenar o UUID validado
         db_request = None # Inicializar para o bloco finally
+
+        effective_language = language if language else "português"
 
         try:
             logger.info(f"Processando item para request_id: {request_id_interno}, task_type: {task_type}, project_id_str: {project_id_str}")
@@ -116,12 +119,12 @@ class WorkItemProcessor(ABC):
             # --- Processamento do LLM e Persistência ---
             # (try-except bloco para LLM, parsing, commit)
             try:
-                logger.info(f"Chamando LLMAgent para request_id: {request_id_interno}")
-                prompt_data_dict = self.process_prompt_data(prompt_data, type_test)
+                logger.info(f"Chamando LLMAgent para request_id: {request_id_interno} com idioma: {effective_language}")
+                processed_prompt_data = self.process_prompt_data(prompt_data, type_test, effective_language)
                 if llm_config:
                     self.configure_llm_agent(self.llm_agent, llm_config)
 
-                llm_response = self.llm_agent.generate_text(prompt_data_dict, llm_config)
+                llm_response = self.llm_agent.generate_text(processed_prompt_data, llm_config)
                 generated_text = llm_response["text"]
                 prompt_tokens = llm_response["prompt_tokens"]
                 completion_tokens = llm_response["completion_tokens"]
@@ -218,7 +221,7 @@ class WorkItemProcessor(ABC):
         return getattr(artifact, parent_column.name) # Dynamically get parent ID using column name
 
 
-    def process_prompt_data(self, prompt_data: dict, type_test: Optional[str]) -> dict:
+    def process_prompt_data(self, prompt_data: dict, type_test: Optional[str], language: str) -> dict:
         prompt_data_dict = prompt_data.copy()
         if 'user_input' in prompt_data_dict:
             prompt_data_dict['user'] = prompt_data_dict['user'].replace(
@@ -231,6 +234,17 @@ class WorkItemProcessor(ABC):
         for key in ['system', 'user', 'assistant']:
             if key in prompt_data_dict:
                 prompt_data_dict[key] = prompt_data_dict[key].replace("{type_test}", replacement)
+        
+        # *** NOVO: Injetar language ***
+        placeholder_language = "{language}"
+        # Injetar principalmente no system prompt, mas verificar outros por segurança
+        for key in ['system', 'user', 'assistant']:
+             if key in prompt_data_dict and isinstance(prompt_data_dict[key], str) and placeholder_language in prompt_data_dict[key]:
+                 prompt_data_dict[key] = prompt_data_dict[key].replace(placeholder_language, language)
+                 logger.debug(f"Placeholder {placeholder_language} substituído por '{language}' no prompt '{key}'.")
+             elif key=='system' and placeholder_language not in prompt_data_dict.get('system',''):
+                 logger.warning(f"Placeholder {placeholder_language} não encontrado no prompt 'system'. A injeção de idioma pode não funcionar como esperado.")
+
         return prompt_data_dict
 
     def configure_llm_agent(self, agent: LLMAgent, config: dict):

@@ -38,6 +38,7 @@ def parse_feature_update(response: str) -> dict:
         return {
             "title": validated.title,
             "description": validated.description,
+            "acceptance_criteria": validated.acceptance_criteria,
             "summary": validated.summary if hasattr(validated, "summary") else None
         }
     except (json.JSONDecodeError, ValidationError) as e:

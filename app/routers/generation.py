@@ -48,6 +48,7 @@ async def generate(request: RequestSchema, db: Session = Depends(get_db)):
             "task_type": request.task_type.value,  # Passar o task_type como string (valor do enum)
             "prompt_data": request.prompt_data.model_dump(),  # Passar os dados do prompt
             "llm_config": llm_config.model_dump(),  # Passar as configurações da LLM (opcional)
+            "language": request.language,
             "work_item_id": request.work_item_id,  # <-- Passando para a task
             "parent_board_id": request.parent_board_id,
             "type_test": request.type_test
@@ -174,6 +175,7 @@ async def reprocess(
         "artifact_id": artifact_id,
         "prompt_data": request.prompt_data.model_dump(),
         "llm_config": request.llm_config.model_dump() if request.llm_config else None,
+        "language": request.language,
         "work_item_id": request.work_item_id,
         "parent_board_id": request.parent_board_id,
         "type_test": request.type_test
@@ -242,6 +244,7 @@ async def create_independent(request: IndependentCreationRequest, db: Session = 
         "task_type": request.task_type.value,
         "prompt_data": request.prompt_data.model_dump(),
         "llm_config": llm_config.model_dump() if request.llm_config else None,
+        "language": request.language,
         "work_item_id": request.work_item_id,
         "parent_board_id": request.parent_board_id,
         "type_test": request.type_test

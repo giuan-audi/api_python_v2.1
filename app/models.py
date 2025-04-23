@@ -66,6 +66,7 @@ class Feature(Base):
     reflection = Column(JSON, nullable=True)
     work_item_id = Column(String, nullable=True)
     parent_board_id = Column(String, nullable=True)
+    acceptance_criteria = Column(Text)
 
 
 class UserStory(Base):

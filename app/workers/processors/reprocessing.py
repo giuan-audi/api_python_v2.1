@@ -43,7 +43,12 @@ class WorkItemReprocessor(WorkItemProcessor):
         existing_item.updated_at = datetime.now()
 
         # Atualiza campos específicos conforme o tipo do artefato
-        if task_type_enum == TaskType.TEST_CASE:
+        if task_type_enum == TaskType.FEATURE:
+            existing_item.title = updated_data.get("title", existing_item.title)
+            existing_item.description = updated_data.get("description", existing_item.description)
+            existing_item.acceptance_criteria = updated_data.get("acceptance_criteria", existing_item.acceptance_criteria) # <-- ADICIONADO
+            existing_item.summary = updated_data.get("summary", existing_item.summary)
+        elif task_type_enum == TaskType.TEST_CASE:
             # TestCase: possui title, gherkin, priority e actions (não possui description)
             existing_item.title = updated_data.get("title", existing_item.title)
             existing_item.gherkin = updated_data.get("gherkin", existing_item.gherkin)

@@ -54,6 +54,7 @@ class Request(BaseModel):
     parent: int = Field(..., description="ID do item pai (Épico, Feature, etc.) gerado pelo cliente.")
     task_type: TaskTypeEnum = Field(..., description="Tipo de tarefa a ser gerada (epic, feature, user_story, task, bug, issue, pbi, test_case).")
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
+    language: Optional[str] = Field("português", description="Idioma para a resposta da LLM (padrão: português).")
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
     work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
     parent_board_id: Optional[str] = Field(None, description="ID do quadro pai no Azure DevOps (opcional).")
@@ -62,6 +63,7 @@ class Request(BaseModel):
 
 class ReprocessRequest(BaseModel):
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
+    language: Optional[str] = Field("português", description="Idioma para a resposta da LLM (padrão: português).")
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
     type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress")
     work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
@@ -89,6 +91,7 @@ class IndependentCreationRequest(BaseModel):
     project_id: UUID = Field(..., description="ID do Projeto (UUID) ao qual o artefato pertence.")
     task_type: TaskTypeEnum = Field(..., description="Tipo de tarefa a ser gerada (epic, feature, user_story, task, etc.).")
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM (inclui user_input).")
+    language: Optional[str] = Field("português", description="Idioma para a resposta da LLM (padrão: português).")
     parent: Optional[int] = Field(None, description="ID do item pai (opcional para esta rota).") # Opcional
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
     work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
@@ -112,7 +115,7 @@ class EpicResponse(BaseModel):
 class FeatureResponse(BaseModel):
     title: str = Field(..., description="Título da Feature.")
     description: str = Field(..., description="Descrição detalhada da Feature.")
-    # reflection: Dict[str, Any] = Field(..., description="Reflexão sobre a Feature.")
+    acceptance_criteria: Optional[str] = Field(None, description="Critérios de aceite da Feature (opcional).")
     summary: Optional[str] = Field(None)
 
 class UserStoryResponse(BaseModel):
