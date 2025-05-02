@@ -1,5 +1,5 @@
 import json
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 from app.models import Epic, Feature, UserStory, Task, Bug, Issue, PBI, TestCase, Action, WBS
 from app.schemas.schemas import EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse, BugResponse, IssueResponse, PBIResponse, TestCaseResponse, ActionResponse, WBSResponse, AutomationScriptResponse
 from pydantic import ValidationError
@@ -46,56 +46,82 @@ def parse_wbs_response(response: str, parent_id: int, prompt_tokens: int, comple
         raise ValueError(error_message)
 
 
-def parse_feature_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[Feature]:
+def parse_feature_response(response: str, parent_id: Optional[int], prompt_tokens: int, completion_tokens: int) -> List[Feature]:
+    """
+    Parseia a resposta JSON da LLM para criar uma lista de objetos Feature.
+    Espera que 'acceptance_criteria' no JSON seja uma lista de strings.
+    Salva 'acceptance_criteria' como uma única string formatada no modelo.
+
+    Args:
+        response: A string JSON retornada pela LLM.
+        parent_id: O ID do pai hierárquico (ex: Epic ID). Pode ser None.
+        prompt_tokens: Número de tokens no prompt.
+        completion_tokens: Número de tokens na resposta.
+
+    Returns:
+        Uma lista de instâncias do modelo SQLAlchemy Feature.
+
+    Raises:
+        ValueError: Se ocorrer um erro durante o parsing ou validação.
+    """
+    logger.debug(f"Parsing Feature response para parent_id: {parent_id}")
     try:
         features_data = json.loads(response)
+        validated_features: List[FeatureResponse] = [] # Schema espera List[str] para AC
 
-        # --- TRATAMENTO PARA LISTA OU OBJETO ÚNICO ---
+        # Lida com resposta sendo um objeto único ou uma lista
         if isinstance(features_data, list):
-            # Se for uma lista, processa normalmente
+            if not features_data: # Lista vazia
+                 logger.warning("Recebida lista vazia de features da LLM.")
+                 return []
             validated_features = [FeatureResponse(**feat) for feat in features_data]
-            features = []
-            for feat in validated_features:
-                new_feature = Feature(
-                    parent=parent_id,
-                    title=feat.title,
-                    description=feat.description,
-                    acceptance_criteria=feat.acceptance_criteria,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    # reflection=feat.reflection
-                )
-                #Adiciona o summary
-                if hasattr(feat, 'summary') and feat.summary is not None:
-                    new_feature.summary = feat.summary
-                features.append(new_feature)
-            return features
-
         elif isinstance(features_data, dict):
-            # Se for um único objeto, coloca em uma lista
-            validated_feature = FeatureResponse(**features_data)
-            feature = Feature(
-                parent=parent_id,
-                title=validated_feature.title,
-                description=validated_feature.description,
-                acceptance_criteria=validated_feature.acceptance_criteria,
+            validated_features = [FeatureResponse(**features_data)]
+        else:
+            raise ValueError(f"Formato de resposta inválido para Feature. Esperava lista ou objeto, recebeu {type(features_data)}.")
+
+        features_list: List[Feature] = []
+        for feat_data in validated_features:
+            # Formatar a lista de critérios (se existir) em uma string com marcadores
+            ac_string: Optional[str] = None
+            if feat_data.acceptance_criteria and isinstance(feat_data.acceptance_criteria, list):
+                ac_string = "\n".join(f"- {item}" for item in feat_data.acceptance_criteria)
+            elif feat_data.acceptance_criteria: # Se não for lista mas existir, tenta converter para string
+                 logger.warning(f"acceptance_criteria para Feature '{feat_data.title}' não era uma lista, convertendo para string.")
+                 ac_string = str(feat_data.acceptance_criteria)
+
+
+            # Criar instância do modelo Feature
+            new_feature = Feature(
+                parent=parent_id, # Define o ID do pai (pode ser None se a FK permitir)
+                title=feat_data.title,
+                description=feat_data.description,
+                acceptance_criteria=ac_string, # Salva a string formatada (ou None)
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                # reflection=validated_feature.reflection
+                summary=feat_data.summary
+                # Campos como version, is_active, project_id, parent_type são definidos depois
             )
-            #Adiciona o summary
-            if hasattr(validated_feature, 'summary') and validated_feature.summary is not None:
-                feature.summary = validated_feature.summary
-            return [feature]  # Retorna uma lista com um único elemento
+            features_list.append(new_feature)
 
-        else:
-            # Se não for nem lista nem dicionário, lança um erro
-            raise ValueError("Formato de resposta inválido para Feature. Esperava uma lista ou um objeto.")
+        logger.info(f"Parsing de {len(features_list)} Feature(s) concluído com sucesso.")
+        return features_list
 
-    except (json.JSONDecodeError, KeyError, ValidationError) as e:
-        error_message = f"Erro ao parsear resposta de Feature: {str(e)}"
+    except ValidationError as e:
+        error_message = f"Erro de validação Pydantic ao parsear Feature: {e}"
         logger.error(error_message, exc_info=True)
-        raise ValueError(error_message)
+        # Logar a resposta problemática pode ajudar na depuração
+        logger.debug(f"Resposta JSON problemática (Feature): {response}")
+        raise ValueError(error_message) from e
+    except json.JSONDecodeError as e:
+        error_message = f"Erro ao decodificar JSON da resposta de Feature: {e}"
+        logger.error(error_message, exc_info=True)
+        logger.debug(f"Resposta JSON problemática (Feature): {response}")
+        raise ValueError(error_message) from e
+    except Exception as e: # Captura outros erros inesperados
+        error_message = f"Erro inesperado ao parsear resposta de Feature: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        raise ValueError(error_message) from e
 
 def parse_user_story_response(response: str, parent_id: int, prompt_tokens: int, completion_tokens: int) -> List[UserStory]:
     try:

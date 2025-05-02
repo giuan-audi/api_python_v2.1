@@ -1,8 +1,9 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, root_validator
 from typing import Dict, List, Optional, Any
 from enum import Enum
 from datetime import datetime
 from uuid import UUID
+# from models import TaskTypeEnum
 
 
 class LLMConfig(BaseModel):
@@ -42,6 +43,7 @@ class TaskTypeEnum(str, Enum):
     TEST_CASE = 'test_case'
     WBS = "wbs"
     AUTOMATION_SCRIPT = "automation_script"
+    PROJECT = "project"
 
 class PromptData(BaseModel):
     system: str = Field(..., description="Prompt para definir o papel do sistema.")
@@ -52,6 +54,7 @@ class PromptData(BaseModel):
 
 class Request(BaseModel):
     parent: int = Field(..., description="ID do item pai (Épico, Feature, etc.) gerado pelo cliente.")
+    parent_type: TaskTypeEnum = Field(..., description="Tipo do artefato pai.")
     task_type: TaskTypeEnum = Field(..., description="Tipo de tarefa a ser gerada (epic, feature, user_story, task, bug, issue, pbi, test_case).")
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM.")
     language: Optional[str] = Field("português", description="Idioma para a resposta da LLM (padrão: português).")
@@ -93,10 +96,19 @@ class IndependentCreationRequest(BaseModel):
     prompt_data: PromptData = Field(..., description="Dados do prompt para a LLM (inclui user_input).")
     language: Optional[str] = Field("português", description="Idioma para a resposta da LLM (padrão: português).")
     parent: Optional[int] = Field(None, description="ID do item pai (opcional para esta rota).") # Opcional
+    parent_type: Optional[TaskTypeEnum] = Field(None, description="Tipo do artefato pai (obrigatório se parent ID for fornecido).")
     llm_config: Optional[LLMConfig] = Field(None, description="Configurações da LLM (opcional).")
     work_item_id: Optional[str] = Field(None, description="ID do item de trabalho no Azure DevOps (opcional).")
     parent_board_id: Optional[str] = Field(None, description="ID do quadro pai no Azure DevOps (opcional).")
     type_test: Optional[str] = Field(None, description="Tipo de teste (opcional). Ex: cypress")
+
+    @root_validator(pre=False, skip_on_failure=True)
+    def check_parent_type_if_parent_exists(cls, values):
+        parent_id = values.get('parent')
+        parent_type_value = values.get('parent_type') # Usa o nome correto aqui
+        if parent_id is not None and parent_type_value is None:
+            raise ValueError('parent_type é obrigatório quando parent ID é fornecido')
+        return values
 
 
 class ReflectionResponse(BaseModel):
@@ -115,7 +127,7 @@ class EpicResponse(BaseModel):
 class FeatureResponse(BaseModel):
     title: str = Field(..., description="Título da Feature.")
     description: str = Field(..., description="Descrição detalhada da Feature.")
-    acceptance_criteria: Optional[str] = Field(None, description="Critérios de aceite da Feature (opcional).")
+    acceptance_criteria: Optional[List[str]] = Field(None, description="Lista de critérios de aceite da Feature (opcional).")
     summary: Optional[str] = Field(None)
 
 class UserStoryResponse(BaseModel):

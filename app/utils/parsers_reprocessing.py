@@ -1,12 +1,15 @@
 # parsers_reprocessing.py
-
 import json
 import re
+import logging
+from typing import Dict, Any
 from pydantic import ValidationError
 from app.schemas.schemas import (
     EpicResponse, FeatureResponse, UserStoryResponse, TaskResponse,
     BugResponse, IssueResponse, PBIResponse, TestCaseResponse, WBSResponse, AutomationScriptResponse
 )
+
+logger = logging.getLogger(__name__)
 
 def parse_epic_update(response: str) -> dict:
     """
@@ -25,24 +28,60 @@ def parse_epic_update(response: str) -> dict:
     except (json.JSONDecodeError, ValidationError) as e:
         raise ValueError(f"Erro ao parsear Epic para reprocessamento: {e}")
 
-def parse_feature_update(response: str) -> dict:
+def parse_feature_update(response: str) -> Dict[str, Any]:
     """
-    Processa a resposta para atualizar uma Feature e retorna um dicionário com os dados.
-    Suporta resposta no formato de objeto único ou lista (nesse caso, utiliza o primeiro item).
+    Processa a resposta JSON da LLM para atualização de uma Feature.
+    Espera que 'acceptance_criteria' no JSON seja uma lista de strings.
+    Retorna um dicionário com os dados validados, incluindo a lista de acceptance_criteria.
+
+    Args:
+        response: A string JSON retornada pela LLM.
+
+    Returns:
+        Um dicionário contendo os dados atualizados da Feature.
+
+    Raises:
+        ValueError: Se ocorrer um erro durante o parsing ou validação.
     """
+    logger.debug("Parsing Feature response para reprocessamento.")
     try:
         data = json.loads(response)
+        # Lida com resposta sendo um objeto único ou uma lista (pega o primeiro)
         if isinstance(data, list):
+            if not data:
+                raise ValueError("Resposta JSON para atualização de Feature está vazia.")
             data = data[0]
+        elif not isinstance(data, dict):
+             raise ValueError(f"Formato de resposta inválido para atualização de Feature. Esperava lista ou objeto, recebeu {type(data)}.")
+
+        # Valida os dados usando o schema FeatureResponse atualizado
         validated = FeatureResponse(**data)
-        return {
+
+        # Cria o dicionário com os dados validados
+        update_dict = {
             "title": validated.title,
             "description": validated.description,
+            # Retorna a lista (ou None) diretamente. O processador formatará.
             "acceptance_criteria": validated.acceptance_criteria,
-            "summary": validated.summary if hasattr(validated, "summary") else None
+            "summary": validated.summary # Será None se não existir no schema/resposta
         }
-    except (json.JSONDecodeError, ValidationError) as e:
-        raise ValueError(f"Erro ao parsear Feature para reprocessamento: {e}")
+        logger.info("Parsing de atualização de Feature concluído com sucesso.")
+        return update_dict
+
+    except ValidationError as e:
+        error_message = f"Erro de validação Pydantic ao parsear Feature para reprocessamento: {e}"
+        logger.error(error_message, exc_info=True)
+        logger.debug(f"Resposta JSON problemática (Update Feature): {response}")
+        raise ValueError(error_message) from e
+    except json.JSONDecodeError as e:
+        error_message = f"Erro ao decodificar JSON da resposta de Feature para reprocessamento: {e}"
+        logger.error(error_message, exc_info=True)
+        logger.debug(f"Resposta JSON problemática (Update Feature): {response}")
+        raise ValueError(error_message) from e
+    except Exception as e: # Captura outros erros inesperados
+        error_message = f"Erro inesperado ao parsear Feature para reprocessamento: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        raise ValueError(error_message) from e
 
 def parse_user_story_update(response: str) -> dict:
     """

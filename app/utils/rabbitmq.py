@@ -1,4 +1,4 @@
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 import pika
 import json
 import logging
@@ -33,6 +33,12 @@ class RabbitMQProducer:
             logger.error(f"Erro ao conectar ao RabbitMQ: {e}", exc_info=True)
             raise
 
+    @retry(
+            retry=retry_if_exception_type(pika.exceptions.AMQPError), # Tenta em erros AMQP
+            stop=stop_after_attempt(3), # Tenta 3 vezes no total
+            wait=wait_fixed(2), # Espera 2 segundos entre tentativas
+            reraise=True # Re-levanta a exceção se todas as tentativas falharem
+        )
     def publish(self, message: dict, queue_name: str = RABBITMQ_QUEUE): # Método genérico para publicar
         if not self.connection or not self.connection.is_open:
             self._connect()
@@ -48,6 +54,14 @@ class RabbitMQProducer:
             logger.error(f"Erro ao publicar mensagem no RabbitMQ: {e}", exc_info=True)
             self._connect() # Tenta reconectar em caso de erro de publicação
             raise
+        except pika.exceptions.AMQPChannelError as e:
+            logger.warning(f"Erro de canal ao publicar, tentando recriar canal: {e}")
+             # Recriar canal pode ser complexo, talvez reconectar seja mais simples
+            self._connect()
+            raise # Re-levanta para retry
+        except Exception as e: # Capturar outros erros
+            logger.error(f"Erro inesperado ao publicar: {e}", exc_info=True)
+            raise # Re-levanta
 
     def close(self):
         if self.connection and self.connection.is_open:

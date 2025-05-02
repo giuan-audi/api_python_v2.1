@@ -31,9 +31,13 @@ async def generate(request: RequestSchema, db: Session = Depends(get_db)):
     try:
         db_request = DBRequest(
             request_id=str(uuid.uuid4()),
-            parent=str(request.parent),  # Usar o 'parent' (agora como string)
+            parent=str(request.parent),
+            parent_type=request.parent_type.value,
             task_type=request.task_type.value,
-            status=Status.PENDING.value
+            status=Status.PENDING.value,
+            project_id=None,
+            artifact_type=None,
+            artifact_id=None
         )
         db.add(db_request)
         db.commit()
@@ -48,6 +52,7 @@ async def generate(request: RequestSchema, db: Session = Depends(get_db)):
             "task_type": request.task_type.value,  # Passar o task_type como string (valor do enum)
             "prompt_data": request.prompt_data.model_dump(),  # Passar os dados do prompt
             "llm_config": llm_config.model_dump(),  # Passar as configurações da LLM (opcional)
+            "parent_type": request.parent_type.value,
             "language": request.language,
             "work_item_id": request.work_item_id,  # <-- Passando para a task
             "parent_board_id": request.parent_board_id,
@@ -211,11 +216,11 @@ async def create_independent(request: IndependentCreationRequest, db: Session = 
         # Criar registro da requisição no banco de dados
         db_request = DBRequest(
             request_id=request_id_interno,
-            project_id=request.project_id, # Salva o project_id (obrigatório)
-            parent=str(request.parent) if request.parent is not None else None, # Salva o parent (opcional) como string ou None
+            project_id=request.project_id,
+            parent=str(request.parent) if request.parent is not None else None,
+            parent_type=request.parent_type.value if request.parent_type else None,
             task_type=request.task_type.value,
             status=Status.PENDING.value,
-            # artifact_type e artifact_id são None para criação
             artifact_type=None,
             artifact_id=None
         )
@@ -241,6 +246,7 @@ async def create_independent(request: IndependentCreationRequest, db: Session = 
         "request_id_interno": request_id_interno,
         "project_id": str(request.project_id), # Passar project_id como string para Celery/JSON
         "parent": request.parent, # Passar parent (int ou None)
+        "parent_type": request.parent_type.value if request.parent_type else None,
         "task_type": request.task_type.value,
         "prompt_data": request.prompt_data.model_dump(),
         "llm_config": llm_config.model_dump() if request.llm_config else None,

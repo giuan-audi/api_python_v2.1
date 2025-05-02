@@ -19,6 +19,7 @@ class TaskType(enum.Enum):
     TEST_CASE = "test_case"
     WBS = "wbs"
     AUTOMATION_SCRIPT = "automation_script"
+    PROJECT = "project"
 
 
 class Status(enum.Enum):
@@ -31,6 +32,7 @@ class Epic(Base):
     __tablename__ = "epics"
     id = Column(Integer, primary_key=True)  # ID interno (INT), autoincremental
     team_project_id = Column(Integer)  # ID do projeto da equipe (fornecido pelo backend .NET)
+    parent_type = Column(String(50), nullable=True)
     title = Column(String)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
@@ -52,6 +54,7 @@ class Feature(Base):
     __tablename__ = "features"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para epic (parent)
+    parent_type = Column(String(50), nullable=True)
     title = Column(String)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
@@ -73,6 +76,7 @@ class UserStory(Base):
     __tablename__ = "user_stories"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('features.id'))
+    parent_type = Column(String(50), nullable=True)
     title = Column(String)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
@@ -97,6 +101,7 @@ class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para user story (parent)
+    parent_type = Column(String(50), nullable=True)
     title = Column(String)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     description = Column(Text)
@@ -184,6 +189,7 @@ class Request(Base):
     id = Column(Integer, primary_key=True)
     request_id = Column(String, unique=True)
     parent = Column(Integer)
+    parent_type = Column(String(50), nullable=True)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     task_type = Column(String)
     status = Column(String)
@@ -199,6 +205,7 @@ class TestCase(Base):
     __tablename__ = "test_cases"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('user_stories.id'))  # Chave estrangeira para User Story
+    parent_type = Column(String(50), nullable=True)
     title = Column(String)  # Adicionado title para o caso de teste
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     gherkin = Column(JSON)  # Agora armazena o Gherkin como JSON
@@ -235,6 +242,7 @@ class WBS(Base):
     __tablename__ = "wbs"
     id = Column(Integer, primary_key=True)
     parent = Column(Integer, ForeignKey('epics.id'))  # Chave estrangeira para Epic
+    parent_type = Column(String(50), nullable=True)
     project_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     wbs = Column(JSON)  # Armazena a WBS como JSON
     version = Column(Integer, default=1)

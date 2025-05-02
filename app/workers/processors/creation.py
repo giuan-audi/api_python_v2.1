@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 class WorkItemCreator(WorkItemProcessor):
     def _process_item(self, task_type_enum: TaskType, parent: int, prompt_tokens: int, completion_tokens: int,
                       work_item_id: Optional[int], parent_board_id: Optional[int], generated_text: str,
-                      artifact_id: Optional[int] = None, project_id: Optional[UUID] = None) -> Tuple[List[int], int]:
+                      artifact_id: Optional[int] = None, project_id: Optional[UUID] = None, 
+                      parent_type: Optional[TaskType] = None) -> Tuple[List[int], int]:
         """
         Processa a criação de um novo artefato (Epic, Feature, etc.).
         O 'parent' aqui é o ID hierárquico (pode ser None para /independent).
@@ -22,23 +23,36 @@ class WorkItemCreator(WorkItemProcessor):
         # Se parent for None, não há itens existentes para desativar/versionar com base nele.
         # A versão será sempre 1 neste caso.
         new_version = 1
-        if parent is not None:
-            existing_items = self.get_existing_items(self.db, task_type_enum, parent)
+        if parent is not None and parent_type is not None: # Só busca/desativa se tiver pai E tipo
+            existing_items = self.get_existing_items(self.db, task_type_enum, parent, parent_type) # Passa parent_type
             new_version = self.get_new_version(existing_items)
             self.deactivate_existing_items(self.db, existing_items, task_type_enum)
+        elif parent is not None and parent_type is None:
+             logger.warning(f"Parent ID {parent} fornecido sem parent_type em _process_item para {task_type_enum.value}. Não buscando/desativando itens existentes.")
+        else:
+             logger.info(f"Criação sem pai para {task_type_enum.value}. Iniciando com versão 1.")
+
 
         item_ids = self.create_new_items(
-            self.db, task_type_enum, generated_text, parent,
-            prompt_tokens, completion_tokens, new_version, work_item_id, 
-            parent_board_id, project_id
+            db=self.db,
+            task_type=task_type_enum,
+            generated_text=generated_text,
+            parent=parent,
+            parent_type=parent_type,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            version=new_version,
+            work_item_id=work_item_id,
+            parent_board_id=parent_board_id,
+            project_id=project_id
         )
 
         return item_ids, new_version
 
-    def create_new_items(self, db: Session, task_type: TaskType, generated_text: str, parent: int,
-                         prompt_tokens: int, completion_tokens: int, version: int,
-                         work_item_id: Optional[str], parent_board_id: Optional[str],
-                         project_id: Optional[UUID] = None) -> List[int]:
+    def create_new_items(self, db: Session, task_type: TaskType, generated_text: str, parent: Optional[int], 
+                         parent_type: Optional[TaskType], prompt_tokens: int, 
+                         completion_tokens: int, version: int, work_item_id: Optional[str], 
+                         parent_board_id: Optional[str], project_id: Optional[UUID] = None) -> List[int]:
         """
         Cria novos itens no banco de dados com base no tipo de tarefa e no texto gerado pela LLM.
         Retorna uma lista de IDs dos itens criados.
@@ -110,6 +124,8 @@ class WorkItemCreator(WorkItemProcessor):
             new_epic.is_active = True
             # No caso de Epic, 'parent' representa o team_project_id
             new_epic.team_project_id = parent
+            new_epic.parent = parent # Redundancia necessaria para auxiliar .net, mas precisa ser revisado.
+            new_epic.parent_type = parent_type.value if parent_type else None
             new_epic.work_item_id = work_item_id
             new_epic.parent_board_id = parent_board_id
             if project_id: new_epic.project_id = project_id
@@ -118,6 +134,9 @@ class WorkItemCreator(WorkItemProcessor):
             db.flush() # Envia o comando INSERT para o DB e obtém o ID gerado
             db.refresh(new_epic) # Atualiza o objeto new_epic com o ID e outros defaults do DB
             item_ids.append(new_epic.id)
+
+            logger.debug(f"Salvando item {task_type.value} com parent_id={parent} (team_project_id) e parent_type=None")
+            
             # Retorna a lista contendo o ID do novo Epic
             return item_ids
 
@@ -136,6 +155,7 @@ class WorkItemCreator(WorkItemProcessor):
             db.flush()
             db.refresh(new_wbs)
             item_ids.append(new_wbs.id)
+            logger.debug(f"Salvando item {task_type.value} com parent_id={parent} (FK para Epic) e parent_type=None")
             # Retorna a lista contendo o ID da nova WBS
             return item_ids
 
@@ -148,20 +168,18 @@ class WorkItemCreator(WorkItemProcessor):
             # que chamou get_existing_items e deactivate_existing_items
 
             # Parseia os novos itens (pode retornar uma lista)
-            new_items = parser(generated_text, parent, prompt_tokens, completion_tokens)
+            new_items_parsed = parser(generated_text, parent, prompt_tokens, completion_tokens)
 
             # Certifica que new_items seja sempre uma lista para iterar
-            if not isinstance(new_items, list):
+            if not isinstance(new_items_parsed, list):
                 # Se o parser retornou um único objeto, coloca-o em uma lista
                 # (Embora a maioria dos parsers já retorne lista, é bom garantir)
-                 if new_items is not None: # Verifica se não é None
-                     new_items = [new_items]
-                 else:
-                     new_items = [] # Se for None, define como lista vazia
+                if new_items_parsed is not None: new_items_parsed = [new_items_parsed]
+                else: new_items_parsed = []
 
-
+            processed_items = [] 
             # Configura os novos itens antes de adicionar ao banco
-            for item in new_items:
+            for item in new_items_parsed:
                 # Define os campos comuns para todos os novos itens
                 item.version = version
                 item.is_active = True
@@ -170,21 +188,46 @@ class WorkItemCreator(WorkItemProcessor):
                 item.parent_board_id = parent_board_id
                 if project_id: item.project_id = project_id
 
+                item.parent = parent # Salva o ID do pai (pode ser None)
+                parent_type_value = parent_type.value if parent_type else None
+                item.parent_type = parent_type_value
+
+                logger.debug(f"Configurando item {task_type.value}: "
+                         f"parent_id={item.parent}, parent_type={item.parent_type}, "
+                         f"project_id={item.project_id}")
+
                 # Lógica específica para TEST_CASE: configurar Actions
                 if task_type == TaskType.TEST_CASE and hasattr(item, 'actions'):
                     for action in item.actions:
                         # Define a versão e o status ativo para cada nova Action
                         action.version = version
                         action.is_active = True
-                        # A FK test_case_id será definida automaticamente pelo relacionamento SQLAlchemy
+                processed_items.append(item)
 
-            # Adiciona todos os novos itens à sessão do banco de dados
-            if new_items: # Verifica se a lista não está vazia
-                 db.add_all(new_items)
-                 db.flush() # Envia os comandos INSERT para o DB e obtém os IDs
+            # # Adiciona todos os novos itens à sessão do banco de dados
+            # if new_items_parsed: # Verifica se a lista não está vazia
+            #      db.add_all(new_items_parsed)
+            #      db.flush() # Envia os comandos INSERT para o DB e obtém os IDs
 
-                 # Coleta os IDs dos novos itens criados
-                 item_ids.extend([item.id for item in new_items if hasattr(item, 'id')])
+            #      # Coleta os IDs dos novos itens criados
+            #      item_ids.extend([item.id for item in new_items_parsed if hasattr(item, 'id')])
+
+            if processed_items:
+                try:
+                    logger.info(f"Adicionando {len(processed_items)} item(ns) do tipo {task_type.value} à sessão.")
+                    db.add_all(processed_items) # Adiciona todos os itens configurados
+                    db.flush() # Envia para o DB e obtém IDs
+                    item_ids.extend([item.id for item in processed_items if hasattr(item, 'id')])
+                    logger.info(f"Itens adicionados com IDs: {item_ids}")
+                    for p_item in processed_items:
+                        logger.debug(f"Item ID {p_item.id} na sessão APÓS flush: parent_type={p_item.parent_type}")
+                    
+                except Exception as e:
+                    logger.error(f"Erro durante db.add_all ou db.flush: {e}", exc_info=True)
+                    # Re-lançar para ser pego pelo handler de erro no process()
+                    raise
+            else:
+                logger.warning(f"Nenhum item do tipo {task_type.value} foi processado/parseado para adicionar.")
 
             # Retorna a lista de IDs dos novos itens criados
             return item_ids
