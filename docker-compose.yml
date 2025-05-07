@@ -9,28 +9,18 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - CHOSEN_LLM=${CHOSEN_LLM}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - GEMINI_MODEL=${GEMINI_MODEL}
       - TEMPERATURE=${TEMPERATURE}
       - MAX_TOKENS=${MAX_TOKENS}
       - TOP_P=${TOP_P}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
-      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "status"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
 
   celery_app_worker:
     build: .
@@ -39,67 +29,34 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - CHOSEN_LLM=${CHOSEN_LLM}
-      - OPENAI_MODEL=${OPENAI_MODEL}
-      - RABBITMQ_HOST=${RABBITMQ_HOST}
-      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
-      - RABBITMQ_USER=${RABBITMQ_USER}
-      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
-      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - GEMINI_MODEL=${GEMINI_MODEL}
       - TEMPERATURE=${TEMPERATURE}
       - MAX_TOKENS=${MAX_TOKENS}
       - TOP_P=${TOP_P}
-    depends_on:
-      - rabbitmq
+      - RABBITMQ_HOST=${RABBITMQ_HOST}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
 
   flower:
     image: mher/flower:latest
-    command: 
-      - celery  # Adicione esta linha
-      - flower  # Mantenha esta linha
-      - --broker=amqp://guest:guest@rabbitmq:5672//
+    env_file:
+      - .env
+    command:
+      - celery
+      - flower
+      - --broker=${CELERY_BROKER_URL}
       - --port=5555
     ports:
       - "5555:5555"
-    env_file:
-      - .env
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       celery_app_worker:
         condition: service_started
-
-#   test_api:
-#       build: .
-#       command: pytest tests/test_generation -v -s --disable-warnings # Comando para executar os testes
-#       env_file:
-#         - .env
-#       environment:
-#         - DATABASE_URL=${TEST_DATABASE_URL} # Usar o banco de dados de teste
-#         - CELERY_BROKER_URL=${CELERY_BROKER_URL}
-#         - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
-#         - OPENAI_MODEL=${OPENAI_MODEL}
-#         - GEMINI_MODEL=${GEMINI_MODEL}
-#         - TEMPERATURE=${TEMPERATURE}
-#         - MAX_TOKENS=${MAX_TOKENS}
-#         - TOP_P=${TOP_P}
-#         - OPENAI_API_KEY=${OPENAI_API_KEY} # Se precisar de acesso à OpenAI durante os testes
-#         - GEMINI_API_KEY=${GEMINI_API_KEY} # Se precisar de acesso à Gemini durante os testes
-#         - CHOSEN_LLM=${CHOSEN_LLM}
-#         - RABBITMQ_HOST=rabbitmq # Importante: Usar 'rabbitmq' para resolver dentro do Docker
-#         - RABBITMQ_QUEUE=${RABBITMQ_QUEUE}
-#         - RABBITMQ_USER=${RABBITMQ_USER}
-#         - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
-#       depends_on:
-#         - rabbitmq
-#         - api # Depende do serviço 'api' estar rodando também
-#       volumes:
-#         - .:/app # Monta o volume para que o código mais recente esteja disponível
-
-# volumes:
-#   postgres_data:

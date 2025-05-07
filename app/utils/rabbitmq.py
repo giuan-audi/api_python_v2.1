@@ -3,14 +3,17 @@ import pika
 import json
 import logging
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "task_queue")
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST")
+RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
-NOTIFICATION_QUEUE = "notification_queue"  # Nova fila para notificações
+NOTIFICATION_QUEUE = "notification_queue"
 
 
 class RabbitMQProducer:

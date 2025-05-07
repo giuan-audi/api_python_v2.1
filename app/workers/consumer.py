@@ -10,13 +10,27 @@ from app.workers.processors.reprocessing import WorkItemReprocessor
 from app.database import SessionLocal
 from app.models import Request, Status, TaskType
 from app.utils.rabbitmq import RabbitMQProducer, NOTIFICATION_QUEUE
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+broker_url = os.environ.get('CELERY_BROKER_URL')
+backend_url = os.environ.get('CELERY_RESULT_BACKEND')
+
+if not broker_url:
+    logger.critical("Variável de ambiente CELERY_BROKER_URL não definida!")
+    raise ValueError("Variável de ambiente CELERY_BROKER_URL não definida!")
+if not backend_url:
+    logger.critical("Variável de ambiente CELERY_RESULT_BACKEND não definida!")
+    raise ValueError("Variável de ambiente CELERY_RESULT_BACKEND não definida!")
+
+
 celery_app = Celery(
     'tasks',
-    broker=os.environ.get('CELERY_BROKER_URL', 'pyamqp://guest:guest@rabbitmq:5672//'),
-    backend=os.environ.get('CELERY_RESULT_BACKEND', 'db+postgresql://postgres:adm1234@host.docker.internal:5432/postgres'),
+    broker=broker_url,
+    backend=backend_url,
     include=['app.workers.consumer']
 )
 
